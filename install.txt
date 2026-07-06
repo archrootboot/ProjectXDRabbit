@@ -1,0 +1,14 @@
+npm install -g appium@3.2.0
+appium driver install uiautomator2@7.0.0
+
+
+xcopy /e /i /q Android C:\Android
+
+setx ANDROID_HOME "C:\Android" /M
+set ANDROID_HOME=C:\Android
+
+setx PATH "%PATH%;C:\Android\platform-tools" /M
+set PATH=%PATH%;C:\Android\platform-tools
+
+
+pip install -r requirements.txt
