@@ -4,7 +4,7 @@ title XDRabbit Setup
 color 0A
 
 echo ================================================
-echo    🤖  XDRabbit Automated Setup
+echo    XDRabbit Automated Setup
 echo ================================================
 echo.
 
