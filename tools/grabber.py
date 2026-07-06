@@ -1,0 +1,43 @@
+import subprocess
+
+
+def get_emulator_list():
+    try:
+        result = subprocess.run(
+            ['adb', 'devices'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        lines = result.stdout.strip().split('\n')[1:]
+
+        emulators = []
+        port = 8200
+        for line in lines:
+            if 'emulator' in line and 'device' in line:
+                id_only = line.split('\t')[0].strip()
+                emulators.append([id_only, port])
+                port += 1
+
+        if not emulators:
+            print("⚠ No emulators detected via ADB.")
+        else:
+            print(f"✓ Found {len(emulators)} emulator(s): {[e[0] for e in emulators]}")
+
+        return emulators
+
+    except FileNotFoundError:
+        print("✗ ADB not found. Is Android SDK installed and added to PATH?")
+        return []
+    except subprocess.CalledProcessError as e:
+        print(f"✗ ADB command failed: {e}")
+        return []
+    except Exception as e:
+        print(f"✗ Unexpected error in get_emulator_list: {e}")
+        return []
+
+
+# Execute and display
+# emulators = get_emulator_list()
+# print(emulators)

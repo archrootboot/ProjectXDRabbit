@@ -1,0 +1,2 @@
+appPackage - com.view.ytrabbit
+appActivity - com.view.ytrabbit.activity.PrivacyAcvtivty
