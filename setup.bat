@@ -46,7 +46,7 @@ REM ═════════════════════════�
 REM   STEP 2 — Install Node.js v24.14.0
 REM ════════════════════════════════════════════════
 echo [2/6] Checking Node.js v24.14.0...
-node --version 2>&1 | findstr "v24.14.0" >nul
+node --version 2>&1 | findstr "v24.18.0" >nul
 if errorlevel 1 (
     echo → Node.js v24.14.0 not found. Downloading...
     curl -o node_installer.msi https://nodejs.org/dist/v24.14.0/node-v24.14.0-x64.msi
