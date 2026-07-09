@@ -9,7 +9,6 @@ def clear_log():
 
 
 def log(message):
-    print(message)   # ← still print to main window
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(message + "\n")
         f.flush()
