@@ -1,4 +1,5 @@
 import subprocess
+import logger
 
 
 def get_emulator_list():
@@ -21,23 +22,18 @@ def get_emulator_list():
                 port += 1
 
         if not emulators:
-            print("⚠ No emulators detected via ADB.")
+            logger.log("⚠ No emulators detected via ADB.")
         else:
-            print(f"✓ Found {len(emulators)} emulator(s): {[e[0] for e in emulators]}")
+            logger.log(f"✓ Found {len(emulators)} emulator(s): {[e[0] for e in emulators]}")
 
         return emulators
 
     except FileNotFoundError:
-        print("✗ ADB not found. Is Android SDK installed and added to PATH?")
+        logger.log("✗ ADB not found. Is Android SDK installed and added to PATH?")
         return []
     except subprocess.CalledProcessError as e:
-        print(f"✗ ADB command failed: {e}")
+        logger.log(f"✗ ADB command failed: {e}")
         return []
     except Exception as e:
-        print(f"✗ Unexpected error in get_emulator_list: {e}")
+        logger.log(f"✗ Unexpected error in get_emulator_list: {e}")
         return []
-
-
-# Execute and display
-# emulators = get_emulator_list()
-# print(emulators)

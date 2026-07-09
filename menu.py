@@ -1,11 +1,12 @@
 import os
 import subprocess
 import des_cap
+import logger
 
 current_threads = {}
 current_stop_events = {}
 current_drivers = {}
-appium_process = None   # ← track Appium process
+appium_process = None
 
 
 # ── Options ───────────────────────────────────────────────────────────
@@ -69,7 +70,6 @@ def option_four():
         print("⚠ No new emulators found.")
         return
 
-    # ── merge new into current ──
     current_threads.update(new_threads)
     current_stop_events.update(new_stop_events)
     current_drivers.update(new_drivers)

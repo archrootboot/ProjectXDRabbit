@@ -7,6 +7,7 @@ import threading
 import time
 import tools.grabber as grabber
 import tools.watch as watch
+import logger
 import os
 from dotenv import load_dotenv
 
@@ -29,17 +30,17 @@ def run_emulator(udid, system_port, stop_event, drivers):
     try:
         driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
         drivers[udid] = driver
-        print(f"✓ {udid} connected (systemPort: {system_port})")
+        logger.log(f"✓ {udid} connected (systemPort: {system_port})")
 
         # ── open app with retry ──
-        print(f"→ Opening app on {udid}...")
+        logger.log(f"→ Opening app on {udid}...")
         for attempt in range(3):
             try:
                 driver.activate_app(os.getenv("APP_PACKAGE"))
-                print(f"✓ App opened on {udid}")
+                logger.log(f"✓ App opened on {udid}")
                 break
             except Exception as e:
-                print(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to open app: {e}")
+                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to open app: {e}")
                 time.sleep(3)
         else:
             raise Exception(f"[{udid}] Failed to open app after 3 attempts")
@@ -52,10 +53,10 @@ def run_emulator(udid, system_port, stop_event, drivers):
                     (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
                 ))
                 element.click()
-                print(f"✓ Element clicked on {udid}")
+                logger.log(f"✓ Element clicked on {udid}")
                 break
             except Exception as e:
-                print(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to click element: {e}")
+                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to click element: {e}")
                 time.sleep(3)
         else:
             raise Exception(f"[{udid}] Failed to click element after 3 attempts")
@@ -63,73 +64,66 @@ def run_emulator(udid, system_port, stop_event, drivers):
         watch.watch_video(driver, udid, stop_event)
 
     except Exception as e:
-        print(f"✗ Error with {udid}: {e}")
+        logger.log(f"✗ Error with {udid}: {e}")
     finally:
-        # ── always try to quit driver cleanly ──
         if driver is not None:
             try:
                 driver.quit()
-                print(f"✓ {udid} disconnected")
+                logger.log(f"✓ {udid} disconnected")
             except Exception:
-                pass   # ← ignore quit errors
+                pass
 
 
 # ── Thread control functions ──────────────────────────────────────────
 
 def stop_one(udid, threads, stop_events, drivers):
     if udid in stop_events:
-        # ── only close app if thread is still alive ──
         if udid in drivers:
             if threads[udid].is_alive():
                 try:
-                    print(f"→ Closing app on {udid}...")
+                    logger.log(f"→ Closing app on {udid}...")
                     drivers[udid].terminate_app(os.getenv("APP_PACKAGE"))
                 except Exception as e:
-                    print(f"⚠ Could not close app on {udid}: {e}")
+                    logger.log(f"⚠ Could not close app on {udid}: {e}")
             else:
-                print(f"→ {udid} already stopped, skipping app close.")
+                logger.log(f"→ {udid} already stopped, skipping app close.")
 
-        # ── signal thread to stop ──
         stop_events[udid].set()
 
-        # ── wait for thread with timeout ──
-        print(f"→ Waiting for {udid} thread to stop...")
+        logger.log(f"→ Waiting for {udid} thread to stop...")
         threads[udid].join(timeout=15)
 
         if threads[udid].is_alive():
-            print(f"⚠ {udid} thread did not stop cleanly within timeout.")
+            logger.log(f"⚠ {udid} thread did not stop cleanly within timeout.")
         else:
-            print(f"✓ {udid} stopped cleanly.")
+            logger.log(f"✓ {udid} stopped cleanly.")
     else:
-        print(f"✗ {udid} not found.")
+        logger.log(f"✗ {udid} not found.")
 
 
 def stop_all(threads, stop_events, drivers):
-    # ── only close app if thread is still alive ──
     for udid in stop_events:
         if udid in drivers:
             if udid in threads and threads[udid].is_alive():
                 try:
-                    print(f"→ Closing app on {udid}...")
+                    logger.log(f"→ Closing app on {udid}...")
                     drivers[udid].terminate_app(os.getenv("APP_PACKAGE"))
                 except Exception as e:
-                    print(f"⚠ Could not close app on {udid}: {e}")
+                    logger.log(f"⚠ Could not close app on {udid}: {e}")
             else:
-                print(f"→ {udid} already stopped, skipping app close.")
+                logger.log(f"→ {udid} already stopped, skipping app close.")
 
-    # ── signal all threads to stop ──
     for event in stop_events.values():
         event.set()
 
-    # ── wait for all threads with timeout ──
     for udid, thread in threads.items():
         thread.join(timeout=15)
         if thread.is_alive():
-            print(f"⚠ {udid} thread did not stop cleanly within timeout.")
+            logger.log(f"⚠ {udid} thread did not stop cleanly within timeout.")
         else:
-            print(f"✓ {udid} stopped cleanly.")
+            logger.log(f"✓ {udid} stopped cleanly.")
 
-    print("All emulators stopped.")
+    logger.log("All emulators stopped.")
 
 
 def get_status(threads):
@@ -145,7 +139,7 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
     emulators = grabber.get_emulator_list()
 
     if not emulators:
-        print("✗ No emulators found via ADB.")
+        logger.log("✗ No emulators found via ADB.")
         return {}, {}, {}
 
     new_stop_events = {}
@@ -153,12 +147,11 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
     new_drivers = {}
 
     for i, (udid, sys_port) in enumerate(emulators):
-        # ── skip already running emulators ──
         if udid in existing_threads and existing_threads[udid].is_alive():
-            print(f"→ {udid} already running, skipping.")
+            logger.log(f"→ {udid} already running, skipping.")
             continue
 
-        print(f"→ New emulator detected: {udid}")
+        logger.log(f"→ New emulator detected: {udid}")
         stop_event = threading.Event()
         new_stop_events[udid] = stop_event
 
@@ -168,11 +161,10 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
         )
         new_threads[udid] = thread
         thread.start()
-        print(f"→ Thread started for {udid}")
+        logger.log(f"→ Thread started for {udid}")
 
-        # ── 5s interval between thread starts ──
         if i < len(emulators) - 1:
-            print(f"→ Waiting 5s before next thread...")
+            logger.log(f"→ Waiting 5s before next thread...")
             time.sleep(5)
 
     return new_threads, new_stop_events, new_drivers
@@ -186,18 +178,18 @@ def main_pro():
     webdriver_url = os.getenv("WEBDRIVER_URL")
 
     if not webdriver_url:
-        print("✗ WEBDRIVER_URL not set in .env file.")
+        logger.log("✗ WEBDRIVER_URL not set in .env file.")
         return {}, {}, {}
 
     emulators = grabber.get_emulator_list()
 
     if not emulators:
-        print("✗ No emulators found. Aborting.")
+        logger.log("✗ No emulators found. Aborting.")
         return {}, {}, {}
 
-    stop_events = {}   # { "emulator-5554": Event, ... }
-    threads = {}       # { "emulator-5554": Thread, ... }
-    drivers = {}       # { "emulator-5554": driver, ... }
+    stop_events = {}
+    threads = {}
+    drivers = {}
 
     for i, (udid, sys_port) in enumerate(emulators):
         stop_event = threading.Event()
@@ -209,11 +201,10 @@ def main_pro():
         )
         threads[udid] = thread
         thread.start()
-        print(f"→ Thread started for {udid}")
+        logger.log(f"→ Thread started for {udid}")
 
-        # ── 5s interval between thread starts ──
         if i < len(emulators) - 1:
-            print(f"→ Waiting 5s before next thread...")
+            logger.log(f"→ Waiting 5s before next thread...")
             time.sleep(5)
 
     return threads, stop_events, drivers
