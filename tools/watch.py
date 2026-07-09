@@ -1,5 +1,4 @@
 import os
-from dotenv import load_dotenv
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -15,7 +14,9 @@ def watch_video(driver, udid, stop_event):
     max_errors = 3
     check_interval = 5
     buffer_time = 20
-    time_value_skip = int(os.getenv("SKIP_TIME_VALUE", "0").strip())
+
+    # ── load watch time filter from .env ──────────────────────────────
+    watch_time_raw = os.getenv("WATCH_TIME_VALUES", "").strip()
 
 
     # ── Point Check ───────────────────────────────────────────────────
@@ -74,7 +75,35 @@ def watch_video(driver, udid, stop_event):
 
     def is_valid_duration(value):
         try:
-            return int(value.strip()) > time_value_skip
+            duration = int(value.strip())
+
+            if not watch_time_raw:
+                return duration > 0          # ← empty = watch all
+
+            # ── comparison operators ──
+            if watch_time_raw.startswith("<="):
+                threshold = int(watch_time_raw[2:].strip())
+                return duration <= threshold
+
+            elif watch_time_raw.startswith(">="):
+                threshold = int(watch_time_raw[2:].strip())
+                return duration >= threshold
+
+            elif watch_time_raw.startswith("<"):
+                threshold = int(watch_time_raw[1:].strip())
+                return duration < threshold
+
+            elif watch_time_raw.startswith(">"):
+                threshold = int(watch_time_raw[1:].strip())
+                return duration > threshold
+
+            else:
+                # ── exact value or comma separated ──
+                targets = set(
+                    int(v.strip()) for v in watch_time_raw.split(",") if v.strip().isdigit()
+                )
+                return duration in targets
+
         except ValueError:
             return False
 
