@@ -10,7 +10,7 @@ def watch_video(driver, udid, stop_event):
     wait = WebDriverWait(driver, 15)
     consecutive_skips = 0
     consecutive_errors = 0
-    max_skips = 10
+    max_skips = int(os.getenv("MAX_SKIPS", "10").strip())  # ← default 10 if not set
     max_errors = 3
     check_interval = 5
     buffer_time = 20
