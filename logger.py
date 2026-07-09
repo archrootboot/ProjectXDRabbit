@@ -1,8 +1,15 @@
-import queue
+import os
 
-# ── Shared log queue ──────────────────────────────────────────────────
-log_queue = queue.Queue()
+LOG_FILE = "logs.txt"
+
+
+def clear_log():
+    with open(LOG_FILE, "w", encoding="utf-8") as f:
+        f.write("")
 
 
 def log(message):
-    log_queue.put(message)
+    print(message)   # ← still print to main window
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(message + "\n")
+        f.flush()

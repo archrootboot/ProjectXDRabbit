@@ -1,18 +1,13 @@
-import threading
 import subprocess
 import logger
-import log_window
 import menu
 
 
 def main():
-    # ── start log window in separate CMD ──
-    log_thread = threading.Thread(
-        target=log_window.show_logs,
-        daemon=True
-    )
+    # ── clear old logs ──
+    logger.clear_log()
 
-    # ── open new CMD window for logs ──
+    # ── open log window in separate CMD ──
     subprocess.Popen(
         'start "XDRabbit Logs" cmd /k python log_window.py',
         shell=True
