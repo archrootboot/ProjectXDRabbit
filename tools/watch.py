@@ -31,7 +31,7 @@ def watch_video(driver, udid, stop_event):
                 logger.green(f"[{udid}] Points updated: {point_value}")
                 return point_value
             else:
-                logger.log(f"[{udid}] Points not updated yet.")
+                logger.red(f"[{udid}] Points not updated yet.")
                 return None
         except Exception as e:
             logger.red(f"[{udid}] ⚠ point_check failed: {e}")
