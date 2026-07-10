@@ -160,7 +160,7 @@ def watch_video(driver, udid, stop_event):
                 result = wait_for_video(duration)
 
                 if result == "done":
-                    driver.tap([(42, 918)], 100)
+                    driver.tap([(13, 943)], 100)
                     logger.log(f"[{udid}] ✓ Tapped back.")
                     point_check(old_point_value)
                     consecutive_errors = 0
