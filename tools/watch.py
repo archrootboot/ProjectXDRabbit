@@ -1,38 +1,81 @@
 import os
+import time
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
 import logger
 
 
 def watch_video(driver, udid, stop_event):
     wait = WebDriverWait(driver, 15)
-    consecutive_skips = 0
+    consecutive_skips  = 0
     consecutive_errors = 0
-    max_skips = int(os.getenv("MAX_SKIPS", "10").strip())  # ← default 10 if not set
-    max_errors = 3
-    check_interval = 5
-    buffer_time = 20
+    max_skips          = int(os.getenv("MAX_SKIPS", "10").strip())
+    max_errors         = 3
+    check_interval     = 5
+    buffer_time        = 20
 
     # ── load watch time filter from .env ──────────────────────────────
     watch_time_raw = os.getenv("WATCH_TIME_VALUES", "").strip()
+
+    # ── point not updated error tracking (per emulator) ───────────────
+    max_point_errors     = int(os.getenv("MAX_POINT_ERRORS", "10").strip())
+    max_point_error_time = int(os.getenv("MAX_POINT_ERROR_TIME", "1800").strip())
+    point_not_updated_count = 0     # ← count of "not updated" errors
+    point_error_start_time  = None  # ← time of first "not updated"
 
 
     # ── Point Check ───────────────────────────────────────────────────
 
     def point_check(old_point_value):
+        nonlocal point_not_updated_count, point_error_start_time
+
         try:
             point_element = wait.until(EC.presence_of_element_located(
                 (AppiumBy.ID, "com.view.ytrabbit:id/textView_points")
             ))
             point_value = point_element.text
+
             if point_value != old_point_value:
+                # ── points updated — reset counters ──
                 logger.green(f"[{udid}] Points updated: {point_value}")
+                point_not_updated_count = 0
+                point_error_start_time  = None
                 return point_value
+
             else:
-                logger.red(f"[{udid}] Points not updated yet.")
+                # ── points not updated ──
+                point_not_updated_count += 1
+
+                # ── start timer on first fail ──
+                if point_error_start_time is None:
+                    point_error_start_time = time.time()
+
+                elapsed_time = int(time.time() - point_error_start_time)
+
+                logger.red(f"[{udid}] Points not updated. "
+                           f"(count: {point_not_updated_count}/{max_point_errors} | "
+                           f"time: {elapsed_time}s/{max_point_error_time}s)")
+
+                # ── BOTH conditions must be true to restart ──
+                # count >= MAX AND elapsed <= TIME_WINDOW
+                # meaning: X errors happened WITHIN the time window
+                if point_not_updated_count >= max_point_errors and elapsed_time <= max_point_error_time:
+                    logger.red(f"[{udid}] ⚠ {point_not_updated_count} point errors in "
+                               f"{elapsed_time}s (limit: {max_point_errors} errors "
+                               f"within {max_point_error_time}s). Restarting app...")
+                    point_not_updated_count = 0
+                    point_error_start_time  = None
+                    restart_app()
+
+                # ── if time window expired without hitting count — reset ──
+                elif elapsed_time > max_point_error_time:
+                    logger.log(f"[{udid}] → Time window expired. Resetting point error counter.")
+                    point_not_updated_count = 0
+                    point_error_start_time  = None
+
                 return None
+
         except Exception as e:
             logger.red(f"[{udid}] ⚠ point_check failed: {e}")
             return None
@@ -78,9 +121,8 @@ def watch_video(driver, udid, stop_event):
             duration = int(value.strip())
 
             if not watch_time_raw:
-                return duration > 0          # ← empty = watch all
+                return duration > 0
 
-            # ── comparison operators ──
             if watch_time_raw.startswith("<="):
                 threshold = int(watch_time_raw[2:].strip())
                 return duration <= threshold
@@ -98,7 +140,6 @@ def watch_video(driver, udid, stop_event):
                 return duration > threshold
 
             else:
-                # ── exact value or comma separated ──
                 targets = set(
                     int(v.strip()) for v in watch_time_raw.split(",") if v.strip().isdigit()
                 )
@@ -112,7 +153,7 @@ def watch_video(driver, udid, stop_event):
 
     def wait_for_video(duration):
         total_wait = duration + buffer_time
-        elapsed = 0
+        elapsed    = 0
         logger.log(f"[{udid}] ▶ Video started. Waiting {total_wait}s ({duration}s + {buffer_time}s buffer)...")
 
         while not stop_event.is_set() and elapsed < total_wait:
