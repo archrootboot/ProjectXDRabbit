@@ -37,17 +37,15 @@ def watch_video(driver, udid, stop_event):
             point_value = point_element.text
 
             if point_value != old_point_value:
-                # ── points updated — reset counters ──
+                # ── points updated — NO reset, just log ──
                 logger.green(f"[{udid}] Points updated: {point_value}")
-                point_not_updated_count = 0
-                point_error_start_time  = None
                 return point_value
 
             else:
-                # ── points not updated ──
+                # ── points not updated — increment count ──
                 point_not_updated_count += 1
 
-                # ── start timer on first fail ──
+                # ── start timer only on first fail ──
                 if point_error_start_time is None:
                     point_error_start_time = time.time()
 
@@ -57,20 +55,19 @@ def watch_video(driver, udid, stop_event):
                            f"(count: {point_not_updated_count}/{max_point_errors} | "
                            f"time: {elapsed_time}s/{max_point_error_time}s)")
 
-                # ── BOTH conditions must be true to restart ──
-                # count >= MAX AND elapsed <= TIME_WINDOW
-                # meaning: X errors happened WITHIN the time window
+                # ── BOTH conditions met → restart ──
                 if point_not_updated_count >= max_point_errors and elapsed_time <= max_point_error_time:
                     logger.red(f"[{udid}] ⚠ {point_not_updated_count} point errors in "
-                               f"{elapsed_time}s (limit: {max_point_errors} errors "
-                               f"within {max_point_error_time}s). Restarting app...")
+                               f"{elapsed_time}s → restarting app...")
+                    # ── reset only on count completion ──
                     point_not_updated_count = 0
                     point_error_start_time  = None
                     restart_app()
 
-                # ── if time window expired without hitting count — reset ──
+                # ── time window expired → reset and start fresh ──
                 elif elapsed_time > max_point_error_time:
                     logger.log(f"[{udid}] → Time window expired. Resetting point error counter.")
+                    # ── reset only on time completion ──
                     point_not_updated_count = 0
                     point_error_start_time  = None
 
