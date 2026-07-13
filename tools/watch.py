@@ -100,14 +100,14 @@ def watch_video(driver, udid, stop_event):
         time.sleep(10)
 
         try:
-            element = wait.until(EC.element_to_be_clickable(
-                (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
-            ))
-            element.click()
-            logger.log(f"[{udid}] ✓ App restarted successfully.")
+            driver.start_activity(
+                os.getenv("APP_PACKAGE"),
+                "com.view.ytrabbit.activity.ViewActivity"
+            )
+            logger.log(f"[{udid}] ✓ ViewActivity opened after restart.")
             return True
         except Exception as e:
-            logger.log(f"[{udid}] ⚠ Element click after restart failed: {e}")
+            logger.log(f"[{udid}] ⚠ Failed to open ViewActivity after restart: {e}")
             return False
 
 
