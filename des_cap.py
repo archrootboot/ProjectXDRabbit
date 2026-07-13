@@ -45,21 +45,20 @@ def run_emulator(udid, system_port, stop_event, drivers):
         else:
             raise Exception(f"[{udid}] Failed to open app after 3 attempts")
 
-        # ── click element after app opens with retry ──
-        wait = WebDriverWait(driver, 15)
+        # ── open ViewActivity directly with retry ──
         for attempt in range(3):
             try:
-                element = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
-                ))
-                element.click()
-                logger.log(f"✓ Element clicked on {udid}")
+                driver.start_activity(
+                    os.getenv("APP_PACKAGE"),
+                    "com.view.ytrabbit.activity.ViewActivity"
+                )
+                logger.log(f"✓ ViewActivity opened on {udid}")
                 break
             except Exception as e:
-                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to click element: {e}")
+                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to open ViewActivity: {e}")
                 time.sleep(3)
         else:
-            raise Exception(f"[{udid}] Failed to click element after 3 attempts")
+            raise Exception(f"[{udid}] Failed to open ViewActivity after 3 attempts")
 
         watch.watch_video(driver, udid, stop_event)
 
