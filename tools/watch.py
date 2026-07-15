@@ -100,10 +100,9 @@ def watch_video(driver, udid, stop_event):
         time.sleep(10)
 
         try:
-            driver.start_activity(
-                os.getenv("APP_PACKAGE"),
-                "com.view.ytrabbit.activity.ViewActivity"
-            )
+            driver.execute_script("mobile: startActivity", {
+                "intent": f"{os.getenv('APP_PACKAGE')}/com.view.ytrabbit.activity.ViewActivity"
+            })
             logger.log(f"[{udid}] ✓ ViewActivity opened after restart.")
             return True
         except Exception as e:

@@ -48,10 +48,9 @@ def run_emulator(udid, system_port, stop_event, drivers):
         # ── open ViewActivity directly with retry ──
         for attempt in range(3):
             try:
-                driver.start_activity(
-                    os.getenv("APP_PACKAGE"),
-                    "com.view.ytrabbit.activity.ViewActivity"
-                )
+                driver.execute_script("mobile: startActivity", {
+                    "intent": f"{os.getenv('APP_PACKAGE')}/.activity.ViewActivity"
+                })
                 logger.log(f"✓ ViewActivity opened on {udid}")
                 break
             except Exception as e:
