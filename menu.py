@@ -1,6 +1,7 @@
 import os
 import subprocess
 import des_cap
+import tools.campaign as campaign
 import logger
 
 current_threads = {}
@@ -132,6 +133,11 @@ def start_appium_windows(port=4723):
         return None
 
 
+def option_seven():
+    print("\n→ Starting Add Campaign...")
+    campaign.run_add_campaign()
+
+
 # ── Menu ──────────────────────────────────────────────────────────────
 
 def show_menu():
@@ -143,9 +149,10 @@ def show_menu():
         print("4. Add New Emulators")
         print("5. Stop Specific Emulator")
         print("6. Stop All Emulators")
-        print("7. Exit")
+        print("7. Add Campaign")
+        print("8. Exit")
 
-        choice = input("Enter your choice (1-7): ").strip()
+        choice = input("Enter your choice (1-8): ").strip()
 
         if choice == "1":
             option_one()
@@ -160,6 +167,8 @@ def show_menu():
         elif choice == "6":
             option_six()
         elif choice == "7":
+            option_seven()
+        elif choice == "8":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
