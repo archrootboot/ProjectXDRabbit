@@ -5,7 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import threading
 import time
-import grabber
+import tools.grabber as grabber
 import logger
 import os
 from dotenv import load_dotenv
