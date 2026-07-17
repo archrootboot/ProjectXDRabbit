@@ -21,8 +21,8 @@ def watch_video(driver, udid, stop_event):
     # ── point not updated error tracking (per emulator) ───────────────
     max_point_errors     = int(os.getenv("MAX_POINT_ERRORS", "10").strip())
     max_point_error_time = int(os.getenv("MAX_POINT_ERROR_TIME", "1800").strip())
-    point_not_updated_count = 0     # ← count of "not updated" errors
-    point_error_start_time  = None  # ← time of first "not updated"
+    point_not_updated_count = 0
+    point_error_start_time  = None
 
 
     # ── Point Check ───────────────────────────────────────────────────
@@ -37,15 +37,12 @@ def watch_video(driver, udid, stop_event):
             point_value = point_element.text
 
             if point_value != old_point_value:
-                # ── points updated — NO reset, just log ──
                 logger.green(f"[{udid}] Points updated: {point_value}")
                 return point_value
 
             else:
-                # ── points not updated — increment count ──
                 point_not_updated_count += 1
 
-                # ── start timer only on first fail ──
                 if point_error_start_time is None:
                     point_error_start_time = time.time()
 
@@ -55,19 +52,15 @@ def watch_video(driver, udid, stop_event):
                            f"(count: {point_not_updated_count}/{max_point_errors} | "
                            f"time: {elapsed_time}s/{max_point_error_time}s)")
 
-                # ── BOTH conditions met → restart ──
                 if point_not_updated_count >= max_point_errors and elapsed_time <= max_point_error_time:
                     logger.red(f"[{udid}] ⚠ {point_not_updated_count} point errors in "
                                f"{elapsed_time}s → restarting app...")
-                    # ── reset only on count completion ──
                     point_not_updated_count = 0
                     point_error_start_time  = None
                     restart_app()
 
-                # ── time window expired → reset and start fresh ──
                 elif elapsed_time > max_point_error_time:
                     logger.log(f"[{udid}] → Time window expired. Resetting point error counter.")
-                    # ── reset only on time completion ──
                     point_not_updated_count = 0
                     point_error_start_time  = None
 
@@ -76,6 +69,31 @@ def watch_video(driver, udid, stop_event):
         except Exception as e:
             logger.red(f"[{udid}] ⚠ point_check failed: {e}")
             return None
+
+
+    # ── Wait For App Foreground ───────────────────────────────────────
+
+    def wait_for_app_foreground(timeout=30):
+        """
+        Poll until the target app is in the foreground.
+        Replaces a fixed sleep — works even under heavy CPU load with 10+ emulators.
+        """
+        pkg      = os.getenv("APP_PACKAGE")
+        activity = os.getenv("APP_MAIN_ACTIVITY")
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            try:
+                current = driver.current_activity
+                if activity in current:
+                    logger.log(f"[{udid}] ✓ App is in foreground ({current})")
+                    return True
+            except Exception:
+                pass
+            time.sleep(1)
+
+        logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
+        return False
 
 
     # ── Restart App ───────────────────────────────────────────────────
@@ -97,18 +115,30 @@ def watch_video(driver, udid, stop_event):
             logger.log(f"[{udid}] ⚠ activate_app failed: {e}")
             return False
 
-        time.sleep(10)
+        # ── wait for app to actually be in foreground instead of fixed sleep ──
+        reached = wait_for_app_foreground(timeout=30)
+        if not reached:
+            # Give a small extra buffer if the activity check wasn't conclusive
+            time.sleep(5)
 
-        try:
-            element = wait.until(EC.element_to_be_clickable(
-                (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
-            ))
-            element.click()
-            logger.log(f"[{udid}] ✓ App restarted successfully.")
-            return True
-        except Exception as e:
-            logger.log(f"[{udid}] ⚠ Element click after restart failed: {e}")
-            return False
+        # ── use a longer timeout for the post-restart click ──
+        # 10+ emulators means the machine is under load — 45s gives enough headroom
+        restart_wait = WebDriverWait(driver, 45)
+
+        for attempt in range(5):
+            try:
+                element = restart_wait.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
+                ))
+                element.click()
+                logger.log(f"[{udid}] ✓ App restarted successfully (attempt {attempt + 1}).")
+                return True
+            except Exception as e:
+                logger.log(f"[{udid}] ⚠ Element click after restart attempt {attempt + 1}/5 failed: {e}")
+                time.sleep(5)
+
+        logger.log(f"[{udid}] ✗ Failed to click element after restart — all 5 attempts exhausted.")
+        return False
 
 
     # ── Validate Duration ─────────────────────────────────────────────

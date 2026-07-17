@@ -25,6 +25,30 @@ def build_options(udid, system_port):
     return options
 
 
+def wait_for_app_foreground(driver, udid, timeout=30):
+    """Poll until the target app activity is in the foreground."""
+    pkg = os.getenv("APP_PACKAGE")
+    activity = os.getenv("APP_MAIN_ACTIVITY")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            current = driver.current_activity
+            if activity in current or pkg in str(driver.query_app_state(pkg)):
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s")
+    return False
+
+
+def get_click_timeout(num_emulators):
+    """Scale the WebDriverWait timeout based on how many emulators are running."""
+    base = 30
+    per_extra = 3
+    return base + max(0, num_emulators - 1) * per_extra
+
+
 def run_emulator(udid, system_port, stop_event, drivers):
     driver = None
     try:
@@ -45,9 +69,16 @@ def run_emulator(udid, system_port, stop_event, drivers):
         else:
             raise Exception(f"[{udid}] Failed to open app after 3 attempts")
 
+        # ── wait for app to be in foreground before clicking ──
+        wait_for_app_foreground(driver, udid, timeout=30)
+
+        # ── scale timeout based on number of active emulators ──
+        click_timeout = get_click_timeout(len(drivers))
+        logger.log(f"[{udid}] → Using click timeout: {click_timeout}s (emulators: {len(drivers)})")
+        wait = WebDriverWait(driver, click_timeout)
+
         # ── click element after app opens with retry ──
-        wait = WebDriverWait(driver, 15)
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 element = wait.until(EC.element_to_be_clickable(
                     (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
@@ -56,10 +87,10 @@ def run_emulator(udid, system_port, stop_event, drivers):
                 logger.log(f"✓ Element clicked on {udid}")
                 break
             except Exception as e:
-                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to click element: {e}")
-                time.sleep(3)
+                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/5 failed to click element: {e}")
+                time.sleep(5)
         else:
-            raise Exception(f"[{udid}] Failed to click element after 3 attempts")
+            raise Exception(f"[{udid}] Failed to click element after 5 attempts")
 
         watch.watch_video(driver, udid, stop_event)
 
