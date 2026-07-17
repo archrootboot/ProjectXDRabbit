@@ -78,15 +78,19 @@ def watch_video(driver, udid, stop_event):
         Poll until the target app is in the foreground.
         Replaces a fixed sleep — works even under heavy CPU load with 10+ emulators.
         """
-        pkg      = os.getenv("APP_PACKAGE")
-        activity = os.getenv("APP_MAIN_ACTIVITY")
+        pkg            = os.getenv("APP_PACKAGE")        # com.view.ytrabbit
+        activity       = os.getenv("APP_MAIN_ACTIVITY")  # com.view.ytrabbit.MainActivity
+        short_activity = activity.split(".")[-1]          # MainActivity
+
         deadline = time.time() + timeout
 
         while time.time() < deadline:
             try:
-                current = driver.current_activity
-                if activity in current:
-                    logger.log(f"[{udid}] ✓ App is in foreground ({current})")
+                current_activity = driver.current_activity  # ".MainActivity" or "MainActivity"
+                current_package  = driver.current_package   # "com.view.ytrabbit"
+
+                if current_package == pkg and short_activity in current_activity:
+                    logger.log(f"[{udid}] ✓ App is in foreground ({current_activity})")
                     return True
             except Exception:
                 pass

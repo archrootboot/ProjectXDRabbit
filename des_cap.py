@@ -27,18 +27,24 @@ def build_options(udid, system_port):
 
 def wait_for_app_foreground(driver, udid, timeout=30):
     """Poll until the target app activity is in the foreground."""
-    pkg = os.getenv("APP_PACKAGE")
-    activity = os.getenv("APP_MAIN_ACTIVITY")
+    pkg            = os.getenv("APP_PACKAGE")        # com.view.ytrabbit
+    activity       = os.getenv("APP_MAIN_ACTIVITY")  # com.view.ytrabbit.MainActivity
+    short_activity = activity.split(".")[-1]          # MainActivity
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            current = driver.current_activity
-            if activity in current or pkg in str(driver.query_app_state(pkg)):
+            current_activity = driver.current_activity  # ".MainActivity" or "MainActivity"
+            current_package  = driver.current_package   # "com.view.ytrabbit"
+
+            if current_package == pkg and short_activity in current_activity:
+                logger.log(f"[{udid}] ✓ App is in foreground ({current_activity})")
                 return True
         except Exception:
             pass
         time.sleep(1)
-    logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s")
+
+    logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
     return False
 
 
