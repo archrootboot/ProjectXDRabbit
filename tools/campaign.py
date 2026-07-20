@@ -89,10 +89,37 @@ def wait_for_app_foreground(driver, udid, timeout=30):
     logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
     return False
 
+#options
+def view_quantity_option(driver, udid, value: str):
+    wait = WebDriverWait(driver, 30)
+    view_quantity_click = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/textView_view")
+    ))
+    view_quantity_click.click()
+    
+    # Step 1: open the spinner
+    spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
+    spinner.click()
+    logger.log(f"[{udid}] ✓  view quantity spinner clicked...")
+
+    # Step 2: wait for list to appear
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiSelector().resourceId("android:id/text1")'
+        ))
+    )
+
+    # Step 3: scroll into view and click
+    driver.find_element(
+        AppiumBy.ANDROID_UIAUTOMATOR,
+        f'new UiScrollable(new UiSelector().scrollable(true))'
+        f'.scrollIntoView(new UiSelector().text("{value}"))'
+    ).click()
 
 # ── Add Campaign For One Emulator ─────────────────────────────────────
 
-def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_event):
+def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior):
     driver = None
     try:
         logger.log(f"[{udid}] → Connecting...")
@@ -134,16 +161,15 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
             add_button.click()
             logger.log(f"[{udid}] ✓ ADD clicked — waiting for video settings screen...")
 
+
+
             # ── wait for video settings screen (Screen 3) ──
             # ── YOUR CODE GOES HERE ───────────────────────
-            # e.g. fill in view quantity, watch seconds, etc.
-            # Example:
-            # view_qty = wait.until(EC.element_to_be_clickable((AppiumBy.ID, "com.view.ytrabbit:id/???")))
-            # view_qty.clear()
-            # view_qty.send_keys("10")
-            # done_btn = wait.until(EC.element_to_be_clickable((AppiumBy.ID, "com.view.ytrabbit:id/???")))
-            # done_btn.click()
+            view_quantity_option(driver, udid, str(view_quantity))
+            logger.log(f"[{udid}] ✓ view quantity option done...")
             # ─────────────────────────────────────────────
+
+
 
             time.sleep(3)  # placeholder until your code fills this section
 
@@ -168,7 +194,7 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
 
 # ── Main Campaign Runner ──────────────────────────────────────────────
 
-def run_add_campaign():
+def run_add_campaign(view_quantity, watch_seconds, random_behavior):
     load_dotenv()
     webdriver_url = os.getenv("WEBDRIVER_URL")
 
@@ -214,7 +240,7 @@ def run_add_campaign():
 
         t = threading.Thread(
             target=add_campaign_for_emulator,
-            args=(udid, sys_port, assigned_links, webdriver_url, done_event)
+            args=(udid, sys_port, assigned_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior)
         )
         threads.append(t)
         t.start()

@@ -97,6 +97,19 @@ def option_six():
     print("\nStopping all emulators...")
     des_cap.stop_all(current_threads, current_stop_events, current_drivers)
 
+def option_seven():
+    print("\n→ Add Campaign Setup")
+
+    view_quantity  = input("Enter View Quantity: ").strip()
+    watch_seconds  = input("Enter Watch Seconds: ").strip()
+    random_input   = input("Enable Random Behavior? (y/n): ").strip().lower()
+    random_behavior = random_input == "y"
+
+    campaign.run_add_campaign(
+        view_quantity=view_quantity,
+        watch_seconds=watch_seconds,
+        random_behavior=random_behavior
+    )
 
 def stop_appium():
     global appium_process
@@ -132,10 +145,6 @@ def start_appium_windows(port=4723):
         print(f"✗ Failed to start Appium: {e}")
         return None
 
-
-def option_seven():
-    print("\n→ Starting Add Campaign...")
-    campaign.run_add_campaign()
 
 
 # ── Menu ──────────────────────────────────────────────────────────────
