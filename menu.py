@@ -103,12 +103,28 @@ def option_seven():
     view_quantity  = input("Enter View Quantity: ").strip()
     watch_seconds  = input("Enter Watch Seconds: ").strip()
     random_input   = input("Enable Random Behavior? (y/n): ").strip().lower()
-    random_behavior = random_input == "y"
+    random_behavior = random_input == "y" or random_input == "Y"
+
+    if random_behavior:
+        print("\n→ Go with Random Behavior.")
+        min_startime = input("Enter Min Start Time: ").strip()
+        max_startime = input("Enter Max Start Time: ").strip()
+        min_watchtime = input("Enter Min Watch Time: ").strip()
+        max_watchtime = input("Enter Max Watch Time: ").strip()
+    else:
+        min_startime = None
+        max_startime = None
+        min_watchtime = None
+        max_watchtime = None
 
     campaign.run_add_campaign(
         view_quantity=view_quantity,
         watch_seconds=watch_seconds,
-        random_behavior=random_behavior
+        random_behavior=random_behavior,
+        min_startime=min_startime,
+        max_startime=max_startime,
+        min_watchtime=min_watchtime,
+        max_watchtime=max_watchtime
     )
 
 def stop_appium():

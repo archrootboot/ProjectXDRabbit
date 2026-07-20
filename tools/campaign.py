@@ -97,12 +97,11 @@ def view_quantity_option(driver, udid, value: str):
     ))
     view_quantity_click.click()
     
-    # Step 1: open the spinner
+    time.sleep(3)
     spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
     spinner.click()
     logger.log(f"[{udid}] ✓  view quantity spinner clicked...")
 
-    # Step 2: wait for list to appear
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((
             AppiumBy.ANDROID_UIAUTOMATOR,
@@ -110,16 +109,180 @@ def view_quantity_option(driver, udid, value: str):
         ))
     )
 
-    # Step 3: scroll into view and click
     driver.find_element(
         AppiumBy.ANDROID_UIAUTOMATOR,
         f'new UiScrollable(new UiSelector().scrollable(true))'
         f'.scrollIntoView(new UiSelector().text("{value}"))'
     ).click()
 
+    view_quantity_choose = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "android:id/button1")
+    ))
+    view_quantity_choose.click()
+
+
+def watch_seconds_option(driver, udid, value: str):
+    wait = WebDriverWait(driver, 30)
+    watch_seconds_click = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/textView_sec")
+    ))
+    watch_seconds_click.click()
+    
+    time.sleep(3)
+    spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
+    spinner.click()
+    logger.log(f"[{udid}] ✓  watch seconds spinner clicked...")
+
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiSelector().resourceId("android:id/text1")'
+        ))
+    )
+
+    driver.find_element(
+        AppiumBy.ANDROID_UIAUTOMATOR,
+        f'new UiScrollable(new UiSelector().scrollable(true))'
+        f'.scrollIntoView(new UiSelector().text("{value}"))'
+    ).click()
+
+    watch_seconds_choose = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "android:id/button1")
+    ))
+    watch_seconds_choose.click()
+
+def random_behavior_option(driver, udid,):
+    wait = WebDriverWait(driver, 30)
+    random_behavior_button = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/switch_random")
+    ))
+    random_behavior_button.click()
+    logger.log(f"[{udid}] ✓ random behavior option clicked...")
+
+def min_startime_option(driver, udid, value: str):
+    wait = WebDriverWait(driver, 30)
+    min_startime_click = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/textView_min_start")
+    ))
+    min_startime_click.click()
+
+    time.sleep(3)
+    spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
+    spinner.click()
+    logger.log(f"[{udid}] ✓  min start time spinner clicked...")
+
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiSelector().resourceId("android:id/text1")'
+        ))
+    )
+
+    driver.find_element(
+        AppiumBy.ANDROID_UIAUTOMATOR,
+        f'new UiScrollable(new UiSelector().scrollable(true))'
+        f'.scrollIntoView(new UiSelector().text("{value}"))'
+    ).click()
+
+    min_startime_choose = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "android:id/button1")
+    ))
+    min_startime_choose.click()
+
+def max_startime_option(driver, udid, value: str):
+    wait = WebDriverWait(driver, 30)
+    max_startime_click = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/textView_max_start")
+    ))
+    max_startime_click.click()
+
+    time.sleep(3)
+    spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
+    spinner.click()
+    logger.log(f"[{udid}] ✓  max start time spinner clicked...")
+
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiSelector().resourceId("android:id/text1")'
+        ))
+    )
+
+    driver.find_element(
+        AppiumBy.ANDROID_UIAUTOMATOR,
+        f'new UiScrollable(new UiSelector().scrollable(true))'
+        f'.scrollIntoView(new UiSelector().text("{value}"))'
+    ).click()
+
+    max_startime_choose = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "android:id/button1")
+    ))
+    max_startime_choose.click()
+
+def min_watchtime_option(driver, udid, value: str):
+    wait = WebDriverWait(driver, 30)
+    min_watchtime_click = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/textView_min_watch")
+    ))
+    min_watchtime_click.click()
+
+    time.sleep(3)  
+    spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
+    spinner.click()
+    logger.log(f"[{udid}] ✓  min watch time spinner clicked...")
+
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiSelector().resourceId("android:id/text1")'
+        ))
+    )
+
+    driver.find_element(
+        AppiumBy.ANDROID_UIAUTOMATOR,
+        f'new UiScrollable(new UiSelector().scrollable(true))'
+        f'.scrollIntoView(new UiSelector().text("{value}"))'
+    ).click()
+
+    min_watchtime_choose = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "android:id/button1")
+    ))
+    min_watchtime_choose.click()
+
+def max_watchtime_option(driver, udid, value: str):
+    wait = WebDriverWait(driver, 30)
+    max_watchtime_click = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "com.view.ytrabbit:id/textView_max_watch")
+    ))
+    max_watchtime_click.click()
+
+    time.sleep(3)
+    spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
+    spinner.click()
+    logger.log(f"[{udid}] ✓  max watch time spinner clicked...")
+
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiSelector().resourceId("android:id/text1")'
+        ))
+    )
+
+    driver.find_element(
+        AppiumBy.ANDROID_UIAUTOMATOR,
+        f'new UiScrollable(new UiSelector().scrollable(true))'
+        f'.scrollIntoView(new UiSelector().text("{value}"))'
+    ).click()
+
+    max_watchtime_choose = wait.until(EC.element_to_be_clickable(
+    (AppiumBy.ID, "android:id/button1")
+    ))
+    max_watchtime_choose.click()
+
+
 # ── Add Campaign For One Emulator ─────────────────────────────────────
 
-def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior):
+def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
     driver = None
     try:
         logger.log(f"[{udid}] → Connecting...")
@@ -167,6 +330,34 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
             # ── YOUR CODE GOES HERE ───────────────────────
             view_quantity_option(driver, udid, str(view_quantity))
             logger.log(f"[{udid}] ✓ view quantity option done...")
+
+            watch_seconds_option(driver, udid, str(watch_seconds))
+            logger.log(f"[{udid}] ✓ watch seconds option done...")
+
+            if random_behavior:
+                random_behavior_option(driver, udid)
+                logger.log(f"[{udid}] ✓ random behavior option done...")
+
+                min_startime_option(driver, udid, str(min_startime))
+                logger.log(f"[{udid}] ✓ min start time option done...")
+
+                max_startime_option(driver, udid, str(max_startime))
+                logger.log(f"[{udid}] ✓ max start time option done...")
+
+                min_watchtime_option(driver, udid, str(min_watchtime))
+                logger.log(f"[{udid}] ✓ min watch time option done...")
+
+                max_watchtime_option(driver, udid, str(max_watchtime))
+                logger.log(f"[{udid}] ✓ max watch time option done...")
+
+            driver.find_element(
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiScrollable(new UiSelector().scrollable(true))'
+            '.scrollIntoView(new UiSelector().text("Done"))'
+            ).click()
+            logger.log(f"[{udid}] ✓ All options Done ...")
+
+            
             # ─────────────────────────────────────────────
 
 
@@ -194,7 +385,7 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
 
 # ── Main Campaign Runner ──────────────────────────────────────────────
 
-def run_add_campaign(view_quantity, watch_seconds, random_behavior):
+def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
     load_dotenv()
     webdriver_url = os.getenv("WEBDRIVER_URL")
 
@@ -240,7 +431,7 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior):
 
         t = threading.Thread(
             target=add_campaign_for_emulator,
-            args=(udid, sys_port, assigned_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior)
+            args=(udid, sys_port, assigned_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime)
         )
         threads.append(t)
         t.start()
