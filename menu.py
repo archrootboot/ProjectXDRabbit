@@ -2,6 +2,7 @@ import os
 import subprocess
 import des_cap
 import tools.campaign as campaign
+import tools.campaign_status as campaign_status
 import logger
 
 current_threads = {}
@@ -127,6 +128,11 @@ def option_seven():
         max_watchtime=max_watchtime
     )
 
+def option_eight():
+    print("\n→ Fetching campaign status from all emulators...")
+    campaign_status.run_campaign_status()
+
+
 def stop_appium():
     global appium_process
     if appium_process and appium_process.poll() is None:
@@ -175,9 +181,10 @@ def show_menu():
         print("5. Stop Specific Emulator")
         print("6. Stop All Emulators")
         print("7. Add Campaign")
-        print("8. Exit")
+        print("8. Campaign Status")
+        print("9. Exit")
 
-        choice = input("Enter your choice (1-8): ").strip()
+        choice = input("Enter your choice (1-9): ").strip()
 
         if choice == "1":
             option_one()
@@ -194,6 +201,8 @@ def show_menu():
         elif choice == "7":
             option_seven()
         elif choice == "8":
+            option_eight()
+        elif choice == "9":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
@@ -207,7 +216,7 @@ def show_menu():
             print("Exiting program. Goodbye!")
             break
         else:
-            print("Invalid selection. Please try again.")
+            print("Invalid selection. Please try again (1-9).")
 
 
 if __name__ == "__main__":
