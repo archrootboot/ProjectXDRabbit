@@ -41,118 +41,107 @@ def wait_for_app_foreground(driver, udid, timeout=30):
     return False
 
 
-# ── Scrape One Campaign Item ──────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────
+
+MAX_CAMPAIGNS = 3
+RECYCLER_ID   = "com.view.ytrabbit:id/recyclerView_list"
+
+
+# ── Scrape Campaign Items ─────────────────────────────────────────────
+
+def _get_indexed_text(driver, resource_id, index):
+    """
+    Read text from the nth element (1-based) matching a resource-id.
+    Uses XPath index so each slot maps to the correct row.
+    Returns empty string on any failure.
+    """
+    xpath = f'(//android.widget.TextView[@resource-id="{resource_id}"])[{index}]'
+    try:
+        el = driver.find_element(AppiumBy.XPATH, xpath)
+        return el.text.strip()
+    except Exception:
+        return ""
+
 
 def scrape_campaign_items(driver, udid):
     """
-    Scrape all campaign rows visible in the My Campaign screen.
-    Returns a list of dicts with keys: status, watch_seconds, views, views_total
+    Probe slots [1]→[3] using exact resource-IDs found via Appium Inspector:
+
+      textView_done  → status / completion timestamp
+      textView_time  → watch seconds value  (e.g. "65")
+      textView_min   → views done           (e.g. "20")
+      textView_max   → views total          (e.g. "20")
+
+    A slot is considered empty when textView_time returns nothing for that index.
+    Availability = MAX_CAMPAIGNS − filled slots.
     """
     wait = WebDriverWait(driver, 20)
     campaigns = []
 
+    # ── Wait for the recycler to appear ──────────────────────────
     try:
-        # Wait for at least one campaign row to appear
         wait.until(EC.presence_of_element_located(
-            (AppiumBy.ID, "com.view.ytrabbit:id/textView_view_count")
+            (AppiumBy.ID, RECYCLER_ID)
         ))
     except Exception:
-        logger.log(f"[{udid}] ⚠ No campaign rows found on screen.")
+        logger.log(f"[{udid}] ⚠ recyclerView_list not found — no campaigns.")
         return campaigns
 
-    # ── Scroll and collect all items ─────────────────────────────────
-    seen_texts = set()
-    max_scrolls = 10
-    scroll_attempts = 0
+    # ── Probe each slot ───────────────────────────────────────────
+    for index in range(1, MAX_CAMPAIGNS + 1):
 
-    while scroll_attempts < max_scrolls:
-        try:
-            # Find all view-count elements currently visible
-            view_count_els = driver.find_elements(
-                AppiumBy.ID, "com.view.ytrabbit:id/textView_view_count"
-            )
-            status_els = driver.find_elements(
-                AppiumBy.ID, "com.view.ytrabbit:id/textView_status"
-            )
-            watch_sec_els = driver.find_elements(
-                AppiumBy.ID, "com.view.ytrabbit:id/textView_watch_sec"
-            )
-
-            new_items_found = False
-
-            for i in range(len(view_count_els)):
-                try:
-                    view_text  = view_count_els[i].text.strip()   # e.g. "21/20 View" or "0/10 View"
-                    status_text = status_els[i].text.strip()       # e.g. "complete:2026-07-20 22:00:45 (UTC)" or "complete"
-                    watch_text  = watch_sec_els[i].text.strip()    # e.g. "Watch Seconds:65"
-
-                    # Use view_text + status as a unique key to avoid duplicates
-                    item_key = f"{status_text}|{view_text}|{watch_text}"
-                    if item_key in seen_texts:
-                        continue
-
-                    seen_texts.add(item_key)
-                    new_items_found = True
-
-                    # ── Parse view count ──────────────────────────
-                    views_done  = 0
-                    views_total = 0
-                    try:
-                        # "21/20 View" → split on space, take first token, split on /
-                        count_part = view_text.split(" ")[0]  # "21/20"
-                        parts = count_part.split("/")
-                        views_done  = int(parts[0])
-                        views_total = int(parts[1])
-                    except Exception:
-                        pass
-
-                    # ── Parse watch seconds ───────────────────────
-                    watch_seconds = 0
-                    try:
-                        # "Watch Seconds:65" → split on colon
-                        watch_seconds = int(watch_text.split(":")[1].strip())
-                    except Exception:
-                        pass
-
-                    # ── Parse completion status ───────────────────
-                    is_complete   = "complete" in status_text.lower()
-                    complete_time = ""
-                    if is_complete and ":" in status_text:
-                        # "complete:2026-07-20 22:00:45 (UTC)"
-                        try:
-                            complete_time = status_text.split("complete:")[1].strip()
-                        except Exception:
-                            complete_time = ""
-
-                    campaigns.append({
-                        "status":        "complete" if is_complete else "in-progress",
-                        "complete_time": complete_time,
-                        "watch_seconds": watch_seconds,
-                        "views_done":    views_done,
-                        "views_total":   views_total,
-                        "raw_view":      view_text,
-                    })
-
-                except Exception as item_err:
-                    logger.log(f"[{udid}] ⚠ Error parsing item {i}: {item_err}")
-                    continue
-
-            if not new_items_found:
-                break  # No new rows after scroll → we're done
-
-            # ── Scroll down to reveal more items ──────────────────
-            screen_size = driver.get_window_size()
-            start_y = int(screen_size["height"] * 0.75)
-            end_y   = int(screen_size["height"] * 0.25)
-            mid_x   = int(screen_size["width"]  * 0.5)
-
-            driver.swipe(mid_x, start_y, mid_x, end_y, duration=600)
-            time.sleep(1)
-            scroll_attempts += 1
-
-        except Exception as scroll_err:
-            logger.log(f"[{udid}] ⚠ Scroll error: {scroll_err}")
+        # textView_time is always present when a slot is occupied;
+        # use it as the existence check
+        watch_text = _get_indexed_text(driver, "com.view.ytrabbit:id/textView_time", index)
+        if not watch_text:
+            logger.log(f"[{udid}] → Slot [{index}] empty — stopping.")
             break
+
+        # ── Watch seconds ─────────────────────────────────────────
+        watch_seconds = 0
+        try:
+            watch_seconds = int(watch_text)
+        except ValueError:
+            pass
+
+        # ── Views done / total ────────────────────────────────────
+        views_done  = 0
+        views_total = 0
+        try:
+            views_done  = int(_get_indexed_text(driver, "com.view.ytrabbit:id/textView_min", index))
+        except ValueError:
+            pass
+        try:
+            views_total = int(_get_indexed_text(driver, "com.view.ytrabbit:id/textView_max", index))
+        except ValueError:
+            pass
+
+        # ── Status / completion time ──────────────────────────────
+        # textView_done holds e.g. "complete:2026-07-20 22:00:45 (UTC)"
+        # or just "complete" for in-progress items
+        status_text   = _get_indexed_text(driver, "com.view.ytrabbit:id/textView_done", index)
+        is_complete   = "complete" in status_text.lower()
+        complete_time = ""
+        if is_complete and "complete:" in status_text:
+            try:
+                complete_time = status_text.split("complete:")[1].strip()
+            except Exception:
+                pass
+
+        campaigns.append({
+            "slot":          index,
+            "status":        "complete" if is_complete else "in-progress",
+            "complete_time": complete_time,
+            "watch_seconds": watch_seconds,
+            "views_done":    views_done,
+            "views_total":   views_total,
+        })
+        logger.log(
+            f"[{udid}] ✓ Slot [{index}] — "
+            f"views: {views_done}/{views_total}, "
+            f"watch: {watch_seconds}s, "
+            f"status: {status_text[:40]}"
+        )
 
     return campaigns
 
@@ -201,8 +190,8 @@ def check_campaigns_for_emulator(udid, system_port, webdriver_url, results, resu
 # ── Print Report ──────────────────────────────────────────────────────
 
 def print_report(results):
-    divider     = "=" * 62
-    thin_line   = "-" * 62
+    divider   = "=" * 62
+    thin_line = "-" * 62
 
     print(f"\n{divider}")
     print("  📊  Campaign Status Report")
@@ -212,46 +201,53 @@ def print_report(results):
     grand_total_completed  = 0
     grand_total_views_done = 0
     grand_total_views_max  = 0
+    grand_total_available  = 0
 
     for udid, campaigns in results.items():
-        completed   = [c for c in campaigns if c["status"] == "complete"]
-        in_progress = [c for c in campaigns if c["status"] == "in-progress"]
+        completed        = [c for c in campaigns if c["status"] == "complete"]
+        in_progress      = [c for c in campaigns if c["status"] == "in-progress"]
+        slots_used       = len(campaigns)
+        slots_avail      = MAX_CAMPAIGNS - slots_used
         total_views_done = sum(c["views_done"]  for c in campaigns)
         total_views_max  = sum(c["views_total"] for c in campaigns)
 
-        print(f"\n  🤖  Emulator: {udid}")
+        avail_label = f"✓ {slots_avail} available" if slots_avail > 0 else "✗ FULL"
+        print(f"\n  🤖  Emulator : {udid}")
+        print(f"  Slots       : {slots_used}/{MAX_CAMPAIGNS} used  ({avail_label})")
         print(thin_line)
 
         if not campaigns:
-            print("  ⚠  No campaigns found.")
+            print("  ⚠  No campaigns found — all slots free.")
         else:
-            for i, c in enumerate(campaigns, 1):
-                icon = "✓" if c["status"] == "complete" else "⏳"
+            for c in campaigns:
+                icon         = "✓" if c["status"] == "complete" else "⏳"
                 status_label = "Complete" if c["status"] == "complete" else "In Progress"
-                print(f"  {icon} [{i}] {status_label}")
+                print(f"  {icon} [Slot {c['slot']}] {status_label}")
                 if c["complete_time"]:
-                    print(f"       Completed at : {c['complete_time']}")
-                print(f"       Watch Seconds: {c['watch_seconds']}s")
-                print(f"       Views        : {c['views_done']}/{c['views_total']}")
+                    print(f"          Completed at : {c['complete_time']}")
+                print(f"          Watch Seconds: {c['watch_seconds']}s")
+                print(f"          Views        : {c['views_done']}/{c['views_total']}")
 
             print(thin_line)
-            print(f"  Total Campaigns : {len(campaigns)}")
-            print(f"  Completed       : {len(completed)}/{len(campaigns)}")
-            print(f"  In Progress     : {len(in_progress)}")
-            print(f"  Total Views     : {total_views_done}/{total_views_max}")
+            print(f"  Campaigns   : {slots_used}  |  Done: {len(completed)}  |  Running: {len(in_progress)}")
+            print(f"  Total Views : {total_views_done}/{total_views_max}")
 
-        grand_total_campaigns  += len(campaigns)
+        grand_total_campaigns  += slots_used
         grand_total_completed  += len(completed)
         grand_total_views_done += total_views_done
         grand_total_views_max  += total_views_max
+        grand_total_available  += slots_avail
 
     # ── Grand Summary ─────────────────────────────────────────────
+    total_emulators = len(results)
+    total_slots     = total_emulators * MAX_CAMPAIGNS
+
     print(f"\n{divider}")
     print("  📋  Grand Summary (All Emulators)")
     print(thin_line)
-    print(f"  Emulators Checked : {len(results)}")
-    print(f"  Total Campaigns   : {grand_total_campaigns}")
-    print(f"  Completed         : {grand_total_completed}/{grand_total_campaigns}")
+    print(f"  Emulators         : {total_emulators}")
+    print(f"  Total Slots       : {total_slots}  ({grand_total_campaigns} used, {grand_total_available} available)")
+    print(f"  Campaigns Done    : {grand_total_completed}/{grand_total_campaigns}")
     print(f"  In Progress       : {grand_total_campaigns - grand_total_completed}")
     print(f"  Total Views       : {grand_total_views_done}/{grand_total_views_max}")
     print(divider)
