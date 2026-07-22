@@ -117,16 +117,16 @@ def scrape_campaign_items(driver, udid):
             pass
 
         # ── Status / completion time ──────────────────────────────
-        # textView_done holds e.g. "complete:2026-07-20 22:00:45 (UTC)"
-        # or just "complete" for in-progress items
+        # textView_done values:
+        #   Completed   → "complete:2026-07-20 22:00:45 (UTC)"  (timestamp after colon)
+        #   In-progress → "complete:"                            (colon, nothing after)
         status_text   = _get_indexed_text(driver, "com.view.ytrabbit:id/textView_done", index)
-        is_complete   = "complete" in status_text.lower()
         complete_time = ""
-        if is_complete and "complete:" in status_text:
-            try:
-                complete_time = status_text.split("complete:")[1].strip()
-            except Exception:
-                pass
+        if "complete:" in status_text:
+            complete_time = status_text.split("complete:", 1)[1].strip()
+
+        # Completed only when there is an actual timestamp after "complete:"
+        is_complete = bool(complete_time)
 
         campaigns.append({
             "slot":          index,
