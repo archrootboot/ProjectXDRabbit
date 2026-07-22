@@ -472,6 +472,15 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
             else:
                 logger.log(f"[{udid}] ✓ {available} slot(s) available.")
 
+            # ── always navigate back to main screen after checking ──
+            try:
+                wait_tmp.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+                )).click()
+                logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+            except Exception as back_err:
+                logger.log(f"[{udid}] ⚠ Could not click back button: {back_err}")
+
         except Exception as e:
             logger.log(f"[{udid}] ⚠ Could not check slots: {e} — skipping.")
             available_slots_map[udid] = 0
