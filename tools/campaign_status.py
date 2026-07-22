@@ -175,6 +175,12 @@ def check_campaigns_for_emulator(udid, system_port, webdriver_url, results, resu
         with results_lock:
             results[udid] = campaigns
 
+        # ── navigate back to main screen ──
+        wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+        )).click()
+        logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+
     except Exception as e:
         logger.log(f"[{udid}] ✗ Status check error: {e}")
         with results_lock:
