@@ -404,6 +404,12 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
 
         logger.log(f"[{udid}] ✓ All {len(links)} campaign(s) added.")
 
+        # ── navigate back to main screen ──
+        wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+        )).click()
+        logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+
     except Exception as e:
         logger.log(f"[{udid}] ✗ Campaign error: {e}")
     finally:
