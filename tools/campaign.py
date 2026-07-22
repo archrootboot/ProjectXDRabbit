@@ -34,26 +34,59 @@ def read_campaign_links():
     return links
 
 
+# ── Count Occupied Slots On One Emulator ─────────────────────────────
+
+def count_occupied_slots(driver, udid):
+    """
+    Count how many campaign slots are already occupied by probing
+    textView_time[1..MAX] — same proven XPath used in campaign_status.
+    Returns an integer 0–MAX_CAMPAIGNS_PER_EMULATOR.
+    """
+    occupied = 0
+    for index in range(1, MAX_CAMPAIGNS_PER_EMULATOR + 1):
+        xpath = (
+            f'(//android.widget.TextView'
+            f'[@resource-id="com.view.ytrabbit:id/textView_time"])[{index}]'
+        )
+        try:
+            el = driver.find_element(AppiumBy.XPATH, xpath)
+            if el.text.strip():
+                occupied += 1
+            else:
+                break
+        except Exception:
+            break  # element not found → slot empty → stop counting
+
+    logger.log(f"[{udid}] → Occupied slots: {occupied}/{MAX_CAMPAIGNS_PER_EMULATOR}")
+    return occupied
+
+
 # ── Distribute Links Across Emulators ────────────────────────────────
 
-def distribute_links(links, emulators):
+def distribute_links(links, available_slots_map):
     """
-    Distribute links across emulators sequentially.
-    Each emulator gets up to MAX_CAMPAIGNS_PER_EMULATOR links.
+    Distribute links across emulators using per-emulator available slot counts.
 
-    Example: 6 links, 3 emulators → emulator1: [1,2,3], emulator2: [4,5,6]
-    Example: 4 links, 3 emulators → emulator1: [1,2,3], emulator2: [4]
+    available_slots_map: { udid: available_slot_count }
+
+    Example: 4 links, emulator1 has 2 free, emulator2 has 3 free
+             → emulator1: [link1, link2], emulator2: [link3, link4]
     """
     distribution = {}
     link_index = 0
 
-    for udid, _ in emulators:
+    for udid, available in available_slots_map.items():
         if link_index >= len(links):
             break
-        assigned = links[link_index: link_index + MAX_CAMPAIGNS_PER_EMULATOR]
+        if available == 0:
+            logger.log(f"→ {udid} is FULL — skipping.")
+            continue
+
+        assigned = links[link_index: link_index + available]
         distribution[udid] = assigned
-        link_index += MAX_CAMPAIGNS_PER_EMULATOR
-        logger.log(f"→ {udid} assigned {len(assigned)} link(s): {assigned}")
+        link_index += available
+        logger.log(f"→ {udid} assigned {len(assigned)} link(s) "
+                   f"({available} slot(s) free): {assigned}")
 
     return distribution
 
@@ -404,15 +437,57 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         logger.log("✗ No emulators found. Aborting.")
         return
 
-    # ── check total capacity ──
-    total_capacity = len(emulators) * MAX_CAMPAIGNS_PER_EMULATOR
-    if len(links) > total_capacity:
-        logger.log(f"⚠ {len(links)} links but only {total_capacity} slots "
-                   f"({len(emulators)} emulators × {MAX_CAMPAIGNS_PER_EMULATOR}). "
+    # ── check occupied slots per emulator before distributing ──
+    logger.log("→ Checking occupied campaign slots on each emulator...")
+    available_slots_map = {}
+    emulator_map = {udid: sys_port for udid, sys_port in emulators}
+
+    for udid, sys_port in emulators:
+        tmp_driver = None
+        try:
+            tmp_driver = webdriver.Remote(webdriver_url, options=build_options(udid, sys_port))
+            pkg = os.getenv("APP_PACKAGE")
+            tmp_driver.activate_app(pkg)
+            wait_for_app_foreground(tmp_driver, udid, timeout=30)
+
+            wait_tmp = WebDriverWait(tmp_driver, 20)
+            my_campaign = wait_tmp.until(EC.element_to_be_clickable(
+                (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
+            ))
+            my_campaign.click()
+            time.sleep(2)
+
+            occupied  = count_occupied_slots(tmp_driver, udid)
+            available = MAX_CAMPAIGNS_PER_EMULATOR - occupied
+            available_slots_map[udid] = available
+
+            if available == 0:
+                logger.log(f"[{udid}] ✗ All slots full — will be skipped.")
+            else:
+                logger.log(f"[{udid}] ✓ {available} slot(s) available.")
+
+        except Exception as e:
+            logger.log(f"[{udid}] ⚠ Could not check slots: {e} — skipping.")
+            available_slots_map[udid] = 0
+        finally:
+            if tmp_driver is not None:
+                try:
+                    tmp_driver.quit()
+                except Exception:
+                    pass
+
+    total_available = sum(available_slots_map.values())
+    if total_available == 0:
+        logger.log("✗ All emulators are full. No slots available.")
+        return
+
+    logger.log(f"→ Total available slots across all emulators: {total_available}")
+    if len(links) > total_available:
+        logger.log(f"⚠ {len(links)} links but only {total_available} free slot(s). "
                    f"Extra links will be ignored.")
 
-    # ── distribute links ──
-    distribution = distribute_links(links, emulators)
+    # ── distribute links based on actual available slots ──
+    distribution = distribute_links(links, available_slots_map)
 
     if not distribution:
         logger.log("✗ No links to distribute.")
@@ -421,8 +496,6 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
     # ── launch threads ──
     threads = []
     done_events = []
-
-    emulator_map = {udid: sys_port for udid, sys_port in emulators}
 
     for i, (udid, assigned_links) in enumerate(distribution.items()):
         sys_port = emulator_map[udid]
