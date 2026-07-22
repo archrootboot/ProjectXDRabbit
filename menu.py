@@ -118,7 +118,7 @@ def option_seven():
         min_watchtime = None
         max_watchtime = None
 
-    campaign.run_add_campaign(
+    success, message = campaign.run_add_campaign(
         view_quantity=view_quantity,
         watch_seconds=watch_seconds,
         random_behavior=random_behavior,
@@ -127,6 +127,7 @@ def option_seven():
         min_watchtime=min_watchtime,
         max_watchtime=max_watchtime
     )
+    print(f"\n{message}")
 
 def option_eight():
     print("\n→ Fetching campaign status from all emulators...")

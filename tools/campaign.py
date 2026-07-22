@@ -424,18 +424,18 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
 
     if not webdriver_url:
         logger.log("✗ WEBDRIVER_URL not set in .env file.")
-        return
+        return False, "✗ WEBDRIVER_URL not set in .env file."
 
     # ── read links ──
     links = read_campaign_links()
     if not links:
-        return
+        return False, "✗ No links found in campaign_link.txt."
 
     # ── get emulators ──
     emulators = grabber.get_emulator_list()
     if not emulators:
         logger.log("✗ No emulators found. Aborting.")
-        return
+        return False, "✗ No emulators found."
 
     # ── check occupied slots per emulator before distributing ──
     logger.log("→ Checking occupied campaign slots on each emulator...")
@@ -479,7 +479,7 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
     total_available = sum(available_slots_map.values())
     if total_available == 0:
         logger.log("✗ All emulators are full. No slots available.")
-        return
+        return False, "✗ All emulators are full. No slots available."
 
     logger.log(f"→ Total available slots across all emulators: {total_available}")
     if len(links) > total_available:
@@ -491,7 +491,7 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
 
     if not distribution:
         logger.log("✗ No links to distribute.")
-        return
+        return False, "✗ No links to distribute."
 
     # ── launch threads ──
     threads = []
@@ -519,3 +519,4 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         done_event.wait()
 
     logger.log("✓ Add Campaign completed for all emulators.")
+    return True, "✓ Add Campaign completed for all emulators."
