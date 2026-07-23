@@ -135,8 +135,7 @@ def option_eight():
 
 
 def option_nine():
-    print("
-→ Scanning for completed campaigns to delete...")
+    print("→ Scanning for completed campaigns to delete...")
     campaign_status.run_delete_completed()
 
 
