@@ -1,6 +1,8 @@
 import os
 import subprocess
 import des_cap
+import tools.campaign as campaign
+import tools.campaign_status as campaign_status
 import logger
 
 current_threads = {}
@@ -96,6 +98,46 @@ def option_six():
     print("\nStopping all emulators...")
     des_cap.stop_all(current_threads, current_stop_events, current_drivers)
 
+def option_seven():
+    print("\n→ Add Campaign Setup")
+
+    view_quantity  = input("Enter View Quantity: ").strip()
+    watch_seconds  = input("Enter Watch Seconds: ").strip()
+    random_input   = input("Enable Random Behavior? (y/n): ").strip().lower()
+    random_behavior = random_input == "y" or random_input == "Y"
+
+    if random_behavior:
+        print("\n→ Go with Random Behavior.")
+        min_startime = input("Enter Min Start Time: ").strip()
+        max_startime = input("Enter Max Start Time: ").strip()
+        min_watchtime = input("Enter Min Watch Time: ").strip()
+        max_watchtime = input("Enter Max Watch Time: ").strip()
+    else:
+        min_startime = None
+        max_startime = None
+        min_watchtime = None
+        max_watchtime = None
+
+    success, message = campaign.run_add_campaign(
+        view_quantity=view_quantity,
+        watch_seconds=watch_seconds,
+        random_behavior=random_behavior,
+        min_startime=min_startime,
+        max_startime=max_startime,
+        min_watchtime=min_watchtime,
+        max_watchtime=max_watchtime
+    )
+    print(f"\n{message}")
+
+def option_eight():
+    print("\n→ Fetching campaign status from all emulators...")
+    campaign_status.run_campaign_status()
+
+
+def option_nine():
+    print("→ Scanning for completed campaigns to delete...")
+    campaign_status.run_delete_completed()
+
 
 def stop_appium():
     global appium_process
@@ -132,6 +174,7 @@ def start_appium_windows(port=4723):
         return None
 
 
+
 # ── Menu ──────────────────────────────────────────────────────────────
 
 def show_menu():
@@ -143,9 +186,12 @@ def show_menu():
         print("4. Add New Emulators")
         print("5. Stop Specific Emulator")
         print("6. Stop All Emulators")
-        print("7. Exit")
+        print("7. Add Campaign")
+        print("8. Campaign Status")
+        print("9. Delete Complete Campaigns")
+        print("10. Exit")
 
-        choice = input("Enter your choice (1-7): ").strip()
+        choice = input("Enter your choice (1-10): ").strip()
 
         if choice == "1":
             option_one()
@@ -160,6 +206,12 @@ def show_menu():
         elif choice == "6":
             option_six()
         elif choice == "7":
+            option_seven()
+        elif choice == "8":
+            option_eight()
+        elif choice == "9":
+            option_nine()
+        elif choice == "10":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
@@ -173,7 +225,7 @@ def show_menu():
             print("Exiting program. Goodbye!")
             break
         else:
-            print("Invalid selection. Please try again.")
+            print("Invalid selection. Please try again (1-10).")
 
 
 if __name__ == "__main__":
