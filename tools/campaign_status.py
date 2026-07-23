@@ -295,3 +295,133 @@ def run_campaign_status():
         t.join()
 
     print_report(results)
+
+
+# ── Delete Completed Campaigns For One Emulator ───────────────────────
+
+def delete_completed_for_emulator(udid, system_port, webdriver_url):
+    driver = None
+    try:
+        logger.log(f"[{udid}] → Connecting to delete completed campaigns...")
+        driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+
+        pkg = os.getenv("APP_PACKAGE")
+        driver.activate_app(pkg)
+        wait_for_app_foreground(driver, udid, timeout=30)
+
+        wait = WebDriverWait(driver, 20)
+
+        # ── navigate to My Campaign ───────────────────────────────
+        my_campaign = wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
+        ))
+        my_campaign.click()
+        time.sleep(2)
+
+        deleted = 0
+
+        # ── probe all slots, re-checking after each delete ────────
+        # After deleting a slot the list shifts up, so always re-probe
+        # from slot [1] until no more completed slots are found.
+        for _pass in range(MAX_CAMPAIGNS):
+            found_completed = False
+
+            for index in range(1, MAX_CAMPAIGNS + 1):
+                # Check completion status for this slot
+                done_xpath = (
+                    f'(//android.widget.TextView'
+                    f'[@resource-id="com.view.ytrabbit:id/textView_done"])[{index}]'
+                )
+                time_xpath = (
+                    f'(//android.widget.TextView'
+                    f'[@resource-id="com.view.ytrabbit:id/textView_time"])[{index}]'
+                )
+
+                try:
+                    done_el = driver.find_element(AppiumBy.XPATH, done_xpath)
+                    done_text = done_el.text.strip()
+                except Exception:
+                    break  # slot doesn't exist → stop probing
+
+                # Completed = "complete:" followed by an actual timestamp
+                complete_time = ""
+                if "complete:" in done_text:
+                    complete_time = done_text.split("complete:", 1)[1].strip()
+
+                if not complete_time:
+                    # In-progress → skip this slot
+                    logger.log(f"[{udid}] → Slot [{index}] in-progress — skipping.")
+                    continue
+
+                # Completed → click textView_time to delete it
+                try:
+                    time_el = wait.until(EC.element_to_be_clickable(
+                        (AppiumBy.XPATH, time_xpath)
+                    ))
+                    time_el.click()
+                    deleted += 1
+                    found_completed = True
+                    logger.log(f"[{udid}] ✓ Slot [{index}] deleted "
+                               f"(completed at {complete_time}).")
+                    time.sleep(1)  # let the list update before re-probing
+                    break          # restart pass from slot [1] after list shifts
+
+                except Exception as click_err:
+                    logger.log(f"[{udid}] ⚠ Could not delete slot [{index}]: {click_err}")
+
+            if not found_completed:
+                break  # no more completed slots found in this pass
+
+        if deleted == 0:
+            logger.log(f"[{udid}] → No completed campaigns to delete.")
+        else:
+            logger.log(f"[{udid}] ✓ Deleted {deleted} completed campaign(s).")
+
+        # ── navigate back to main screen ─────────────────────────
+        try:
+            wait.until(EC.element_to_be_clickable(
+                (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+            )).click()
+            logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+        except Exception as back_err:
+            logger.log(f"[{udid}] ⚠ Could not click back button: {back_err}")
+
+        return deleted
+
+    except Exception as e:
+        logger.log(f"[{udid}] ✗ Delete error: {e}")
+        return 0
+    finally:
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+
+# ── Main Entry For Delete ─────────────────────────────────────────────
+
+def run_delete_completed():
+    load_dotenv()
+    webdriver_url = os.getenv("WEBDRIVER_URL")
+
+    if not webdriver_url:
+        print("✗ WEBDRIVER_URL not set in .env file.")
+        return
+
+    emulators = grabber.get_emulator_list()
+    if not emulators:
+        print("✗ No emulators found. Aborting.")
+        return
+
+    print(f"\n→ Deleting completed campaigns on {len(emulators)} emulator(s)...")
+
+    grand_total = 0
+
+    # ── run emulator by emulator (sequential) ────────────────────
+    for udid, sys_port in emulators:
+        deleted = delete_completed_for_emulator(udid, sys_port, webdriver_url)
+        grand_total += deleted
+        print(f"  {'✓' if deleted > 0 else '→'} {udid}: {deleted} deleted")
+
+    print(f"\n  Total deleted across all emulators: {grand_total}")
