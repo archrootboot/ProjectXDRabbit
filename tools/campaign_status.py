@@ -355,14 +355,21 @@ def delete_completed_for_emulator(udid, system_port, webdriver_url):
 
                 # Completed → click textView_time to delete it
                 try:
+                    # ── click Watch Seconds to trigger delete dialog ──
                     time_el = wait.until(EC.element_to_be_clickable(
                         (AppiumBy.XPATH, time_xpath)
                     ))
                     time_el.click()
-                    deleted += 1
-                    found_completed = True
+
+                    # ── confirm deletion on the dialog (OK button) ──
+                    wait.until(EC.element_to_be_clickable(
+                        (AppiumBy.ID, "android:id/button1")
+                    )).click()
                     logger.log(f"[{udid}] ✓ Slot [{index}] deleted "
                                f"(completed at {complete_time}).")
+
+                    deleted += 1
+                    found_completed = True
                     time.sleep(1)  # let the list update before re-probing
                     break          # restart pass from slot [1] after list shifts
 
