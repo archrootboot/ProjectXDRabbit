@@ -84,6 +84,8 @@ def run_emulator(udid, system_port, stop_event, drivers):
         wait = WebDriverWait(driver, click_timeout)
 
         # ── click element after app opens with retry ──
+        logger.log(f"→ wait 5s before click element on {udid}...")
+        time.sleep(5) 
         for attempt in range(5):
             try:
                 element = wait.until(EC.element_to_be_clickable(
@@ -94,7 +96,7 @@ def run_emulator(udid, system_port, stop_event, drivers):
                 break
             except Exception as e:
                 logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/5 failed to click element: {e}")
-                time.sleep(5)
+                time.sleep(10)
         else:
             raise Exception(f"[{udid}] Failed to click element after 5 attempts")
 
@@ -201,8 +203,8 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
         logger.log(f"→ Thread started for {udid}")
 
         if i < len(emulators) - 1:
-            logger.log(f"→ Waiting 5s before next thread...")
-            time.sleep(5)
+            logger.log(f"→ Waiting 10s before next thread...")
+            time.sleep(10)
 
     return new_threads, new_stop_events, new_drivers
 
@@ -241,8 +243,8 @@ def main_pro():
         logger.log(f"→ Thread started for {udid}")
 
         if i < len(emulators) - 1:
-            logger.log(f"→ Waiting 5s before next thread...")
-            time.sleep(5)
+            logger.log(f"→ Waiting 10s before next thread...")
+            time.sleep(10)
 
     return threads, stop_events, drivers
 
