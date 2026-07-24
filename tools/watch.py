@@ -260,7 +260,7 @@ def watch_video(driver, udid, stop_event):
                     (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
                 ))
                 skip_button.click()
-                time.sleep(5)
+                time.sleep(1)
 
         except Exception as e:
             consecutive_errors += 1
