@@ -227,7 +227,7 @@ def watch_video(driver, udid, stop_event):
                 image_element = wait.until(EC.element_to_be_clickable(
                     (AppiumBy.ID, image_id)
                 ))
-                time.sleep(2)
+                time.sleep(3)
                 image_element.click()
 
                 result = wait_for_video(duration)
