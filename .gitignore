@@ -182,3 +182,4 @@ cython_debug/
 .cursorindexingignore
 logs.txt
 logs.txt
+campaign_link.txt
