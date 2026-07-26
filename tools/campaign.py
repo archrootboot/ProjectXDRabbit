@@ -17,21 +17,64 @@ MAX_CAMPAIGNS_PER_EMULATOR = 3
 # ── Read Links ────────────────────────────────────────────────────────
 
 def read_campaign_links():
+    """
+    Returns a list of (link, line_index) tuples for lines that are not
+    already marked as done.  line_index is the 0-based position in the
+    file so mark_link_done() can rewrite exactly the right line.
+    Lines that end with 'done' (case-insensitive, with or without a
+    trailing space) are silently skipped.
+    """
     if not os.path.exists(CAMPAIGN_FILE):
         logger.log(f"✗ {CAMPAIGN_FILE} not found.")
         return []
 
     with open(CAMPAIGN_FILE, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f.readlines()]
+        raw_lines = f.readlines()
 
-    links = [l for l in lines if l]  # remove empty lines
+    pending = []
+    skipped = 0
+    for i, raw in enumerate(raw_lines):
+        stripped = raw.strip()
+        if not stripped:
+            continue  # blank line
+        if stripped.lower().endswith(" done") or stripped.lower() == "done":
+            skipped += 1
+            continue  # already used
+        pending.append((stripped, i))
 
-    if not links:
-        logger.log(f"✗ {CAMPAIGN_FILE} is empty.")
+    if skipped:
+        logger.log(f"→ Skipped {skipped} already-done link(s) in {CAMPAIGN_FILE}")
+
+    if not pending:
+        logger.log(f"✗ No pending links in {CAMPAIGN_FILE}.")
         return []
 
-    logger.log(f"✓ Found {len(links)} link(s) in {CAMPAIGN_FILE}")
-    return links
+    logger.log(f"✓ Found {len(pending)} pending link(s) in {CAMPAIGN_FILE}")
+    return pending
+
+
+# ── Mark Link Done ────────────────────────────────────────────────────
+
+def mark_link_done(line_index):
+    """
+    Rewrite line at line_index (0-based) in campaign_link.txt by
+    appending ' done' to it.  Thread-safe via a per-call file read+write.
+    """
+    try:
+        with open(CAMPAIGN_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        original = lines[line_index].rstrip("\n").rstrip("\r")
+        # Guard against double-marking
+        if not original.lower().endswith(" done"):
+            lines[line_index] = original + " done\n"
+
+        with open(CAMPAIGN_FILE, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+        logger.log(f"→ Marked as done in {CAMPAIGN_FILE}: {original.strip()}")
+    except Exception as e:
+        logger.log(f"⚠ Could not mark link done (line {line_index}): {e}")
 
 
 # ── Count Occupied Slots On One Emulator ─────────────────────────────
@@ -63,30 +106,32 @@ def count_occupied_slots(driver, udid):
 
 # ── Distribute Links Across Emulators ────────────────────────────────
 
-def distribute_links(links, available_slots_map):
+def distribute_links(pending, available_slots_map):
     """
-    Distribute links across emulators using per-emulator available slot counts.
+    Distribute pending (link, line_index) tuples across emulators using
+    per-emulator available slot counts.
 
     available_slots_map: { udid: available_slot_count }
 
-    Example: 4 links, emulator1 has 2 free, emulator2 has 3 free
-             → emulator1: [link1, link2], emulator2: [link3, link4]
+    Example: 4 pending links, emulator1 has 2 free, emulator2 has 3 free
+             → emulator1: [(link1, idx1), (link2, idx2)],
+               emulator2: [(link3, idx3), (link4, idx4)]
     """
     distribution = {}
-    link_index = 0
+    cursor = 0
 
     for udid, available in available_slots_map.items():
-        if link_index >= len(links):
+        if cursor >= len(pending):
             break
         if available == 0:
             logger.log(f"→ {udid} is FULL — skipping.")
             continue
 
-        assigned = links[link_index: link_index + available]
+        assigned = pending[cursor: cursor + available]
         distribution[udid] = assigned
-        link_index += available
+        cursor += available
         logger.log(f"→ {udid} assigned {len(assigned)} link(s) "
-                   f"({available} slot(s) free): {assigned}")
+                   f"({available} slot(s) free): {[l for l, _ in assigned]}")
 
     return distribution
 
@@ -315,7 +360,12 @@ def max_watchtime_option(driver, udid, value: str):
 
 # ── Add Campaign For One Emulator ─────────────────────────────────────
 
-def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
+def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
+    """
+    pending_links: list of (link_url, line_index) tuples.
+    Each link is marked 'done' in campaign_link.txt immediately after it is
+    successfully submitted to the app.
+    """
     driver = None
     try:
         logger.log(f"[{udid}] → Connecting...")
@@ -339,8 +389,8 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
         time.sleep(2)
 
         # ── add each link ──
-        for i, link in enumerate(links):
-            logger.log(f"[{udid}] → Adding link {i + 1}/{len(links)}: {link}")
+        for i, (link, line_index) in enumerate(pending_links):
+            logger.log(f"[{udid}] → Adding link {i + 1}/{len(pending_links)}: {link}")
 
             # ── input field ──
             input_field = wait.until(EC.element_to_be_clickable(
@@ -395,14 +445,16 @@ def add_campaign_for_emulator(udid, system_port, links, webdriver_url, done_even
 
 
 
-            time.sleep(3)  # placeholder until your code fills this section
+            time.sleep(3)
 
-            logger.log(f"[{udid}] ✓ Link {i + 1} added successfully")
+            # ── mark this link as done in campaign_link.txt ──
+            mark_link_done(line_index)
+            logger.log(f"[{udid}] ✓ Link {i + 1} added and marked done")
 
-            if i < len(links) - 1:
+            if i < len(pending_links) - 1:
                 time.sleep(2)  # small gap between links
 
-        logger.log(f"[{udid}] ✓ All {len(links)} campaign(s) added.")
+        logger.log(f"[{udid}] ✓ All {len(pending_links)} campaign(s) added.")
 
         # ── navigate back to main screen ──
         wait.until(EC.element_to_be_clickable(
@@ -432,10 +484,10 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         logger.log("✗ WEBDRIVER_URL not set in .env file.")
         return False, "✗ WEBDRIVER_URL not set in .env file."
 
-    # ── read links ──
-    links = read_campaign_links()
-    if not links:
-        return False, "✗ No links found in campaign_link.txt."
+    # ── read pending (unfinished) links ──
+    pending = read_campaign_links()
+    if not pending:
+        return False, "✗ No pending links found in campaign_link.txt."
 
     # ── get emulators ──
     emulators = grabber.get_emulator_list()
@@ -497,12 +549,12 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         return False, "✗ All emulators are full. No slots available."
 
     logger.log(f"→ Total available slots across all emulators: {total_available}")
-    if len(links) > total_available:
-        logger.log(f"⚠ {len(links)} links but only {total_available} free slot(s). "
+    if len(pending) > total_available:
+        logger.log(f"⚠ {len(pending)} pending links but only {total_available} free slot(s). "
                    f"Extra links will be ignored.")
 
-    # ── distribute links based on actual available slots ──
-    distribution = distribute_links(links, available_slots_map)
+    # ── distribute pending links based on actual available slots ──
+    distribution = distribute_links(pending, available_slots_map)
 
     if not distribution:
         logger.log("✗ No links to distribute.")
