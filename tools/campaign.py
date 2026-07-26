@@ -474,6 +474,25 @@ def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, d
         done_event.set()
 
 
+# ── Semaphore-Aware Thread Wrapper ───────────────────────────────────
+
+def run_with_semaphore(semaphore, udid, system_port, pending_links, webdriver_url,
+                       done_event, view_quantity, watch_seconds, random_behavior,
+                       min_startime, max_startime, min_watchtime, max_watchtime):
+    """
+    Acquire the semaphore before running add_campaign_for_emulator and
+    release it when done.  This keeps concurrent threads ≤ MAX_THREADS.
+    """
+    with semaphore:
+        logger.log(f"[{udid}] → Semaphore acquired. Starting campaign thread...")
+        add_campaign_for_emulator(
+            udid, system_port, pending_links, webdriver_url, done_event,
+            view_quantity, watch_seconds, random_behavior,
+            min_startime, max_startime, min_watchtime, max_watchtime
+        )
+    logger.log(f"[{udid}] → Semaphore released.")
+
+
 # ── Main Campaign Runner ──────────────────────────────────────────────
 
 def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
@@ -483,6 +502,10 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
     if not webdriver_url:
         logger.log("✗ WEBDRIVER_URL not set in .env file.")
         return False, "✗ WEBDRIVER_URL not set in .env file."
+
+    # ── read MAX_THREADS from .env (default 5) ──
+    max_threads = int(os.getenv("MAX_THREADS", "5").strip())
+    logger.log(f"→ Max concurrent campaign threads: {max_threads}")
 
     # ── read pending (unfinished) links ──
     pending = read_campaign_links()
@@ -496,52 +519,70 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         return False, "✗ No emulators found."
 
     # ── check occupied slots per emulator before distributing ──
-    logger.log("→ Checking occupied campaign slots on each emulator...")
+    # Cap this phase to max_threads concurrent checks too, so we don't
+    # open more driver sessions than the machine can handle.
+    logger.log(f"→ Checking occupied campaign slots (up to {max_threads} at a time)...")
     available_slots_map = {}
-    emulator_map = {udid: sys_port for udid, sys_port in emulators}
+    emulator_map        = {udid: sys_port for udid, sys_port in emulators}
+    check_semaphore     = threading.Semaphore(max_threads)
+    slot_results        = {}   # udid → available_count
+    slot_lock           = threading.Lock()
 
-    for udid, sys_port in emulators:
+    def check_slots_for(udid, sys_port):
         tmp_driver = None
-        try:
-            tmp_driver = webdriver.Remote(webdriver_url, options=build_options(udid, sys_port))
-            pkg = os.getenv("APP_PACKAGE")
-            tmp_driver.activate_app(pkg)
-            wait_for_app_foreground(tmp_driver, udid, timeout=30)
-
-            wait_tmp = WebDriverWait(tmp_driver, 20)
-            my_campaign = wait_tmp.until(EC.element_to_be_clickable(
-                (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
-            ))
-            my_campaign.click()
-            time.sleep(2)
-
-            occupied  = count_occupied_slots(tmp_driver, udid)
-            available = MAX_CAMPAIGNS_PER_EMULATOR - occupied
-            available_slots_map[udid] = available
-
-            if available == 0:
-                logger.log(f"[{udid}] ✗ All slots full — will be skipped.")
-            else:
-                logger.log(f"[{udid}] ✓ {available} slot(s) available.")
-
-            # ── always navigate back to main screen after checking ──
+        with check_semaphore:
             try:
-                wait_tmp.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
-                )).click()
-                logger.log(f"[{udid}] ✓ Navigated back to main screen.")
-            except Exception as back_err:
-                logger.log(f"[{udid}] ⚠ Could not click back button: {back_err}")
+                tmp_driver = webdriver.Remote(webdriver_url, options=build_options(udid, sys_port))
+                pkg = os.getenv("APP_PACKAGE")
+                tmp_driver.activate_app(pkg)
+                wait_for_app_foreground(tmp_driver, udid, timeout=30)
 
-        except Exception as e:
-            logger.log(f"[{udid}] ⚠ Could not check slots: {e} — skipping.")
-            available_slots_map[udid] = 0
-        finally:
-            if tmp_driver is not None:
+                wait_tmp = WebDriverWait(tmp_driver, 20)
+                my_campaign = wait_tmp.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
+                ))
+                my_campaign.click()
+                time.sleep(2)
+
+                occupied  = count_occupied_slots(tmp_driver, udid)
+                available = MAX_CAMPAIGNS_PER_EMULATOR - occupied
+
+                if available == 0:
+                    logger.log(f"[{udid}] ✗ All slots full — will be skipped.")
+                else:
+                    logger.log(f"[{udid}] ✓ {available} slot(s) available.")
+
                 try:
-                    tmp_driver.quit()
-                except Exception:
-                    pass
+                    wait_tmp.until(EC.element_to_be_clickable(
+                        (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+                    )).click()
+                    logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+                except Exception as back_err:
+                    logger.log(f"[{udid}] ⚠ Could not click back button: {back_err}")
+
+            except Exception as e:
+                logger.log(f"[{udid}] ⚠ Could not check slots: {e} — skipping.")
+                available = 0
+            finally:
+                if tmp_driver is not None:
+                    try:
+                        tmp_driver.quit()
+                    except Exception:
+                        pass
+
+        with slot_lock:
+            slot_results[udid] = available
+
+    check_threads = []
+    for udid, sys_port in emulators:
+        ct = threading.Thread(target=check_slots_for, args=(udid, sys_port))
+        check_threads.append(ct)
+        ct.start()
+
+    for ct in check_threads:
+        ct.join()
+
+    available_slots_map = slot_results
 
     total_available = sum(available_slots_map.values())
     if total_available == 0:
@@ -560,26 +601,28 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         logger.log("✗ No links to distribute.")
         return False, "✗ No links to distribute."
 
-    # ── launch threads ──
-    threads = []
+    # ── launch threads, capped at MAX_THREADS concurrently ──
+    semaphore   = threading.Semaphore(max_threads)
+    threads     = []
     done_events = []
 
-    for i, (udid, assigned_links) in enumerate(distribution.items()):
-        sys_port = emulator_map[udid]
+    logger.log(f"→ Launching {len(distribution)} campaign thread(s) "
+               f"(max {max_threads} concurrent)...")
+
+    for udid, assigned_links in distribution.items():
+        sys_port   = emulator_map[udid]
         done_event = threading.Event()
         done_events.append(done_event)
 
         t = threading.Thread(
-            target=add_campaign_for_emulator,
-            args=(udid, sys_port, assigned_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime)
+            target=run_with_semaphore,
+            args=(semaphore, udid, sys_port, assigned_links, webdriver_url,
+                  done_event, view_quantity, watch_seconds, random_behavior,
+                  min_startime, max_startime, min_watchtime, max_watchtime)
         )
         threads.append(t)
         t.start()
-        logger.log(f"→ Campaign thread started for {udid}")
-
-        if i < len(distribution) - 1:
-            logger.log(f"→ Waiting 5s before next emulator...")
-            time.sleep(5)
+        logger.log(f"→ Campaign thread queued for {udid}")
 
     # ── wait for all threads to finish ──
     for done_event in done_events:
