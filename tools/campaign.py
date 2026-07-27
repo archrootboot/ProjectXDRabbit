@@ -3,7 +3,6 @@ from appium.options.android import UiAutomator2Options
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import threading
 import time
 import tools.grabber as grabber
 import logger
@@ -360,7 +359,7 @@ def max_watchtime_option(driver, udid, value: str):
 
 # ── Add Campaign For One Emulator ─────────────────────────────────────
 
-def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
+def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
     """
     pending_links: list of (link_url, line_index) tuples.
     Each link is marked 'done' in campaign_link.txt immediately after it is
@@ -471,7 +470,7 @@ def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, d
                 logger.log(f"[{udid}] ✓ Disconnected")
             except Exception:
                 pass
-        done_event.set()
+
 
 
 # ── Main Campaign Runner ──────────────────────────────────────────────
@@ -560,30 +559,16 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
         logger.log("✗ No links to distribute.")
         return False, "✗ No links to distribute."
 
-    # ── launch threads ──
-    threads = []
-    done_events = []
-
+    # ── run emulators one by one (sequential) ──
     for i, (udid, assigned_links) in enumerate(distribution.items()):
         sys_port = emulator_map[udid]
-        done_event = threading.Event()
-        done_events.append(done_event)
-
-        t = threading.Thread(
-            target=add_campaign_for_emulator,
-            args=(udid, sys_port, assigned_links, webdriver_url, done_event, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime)
+        logger.log(f"→ [{i + 1}/{len(distribution)}] Running campaign for {udid}...")
+        add_campaign_for_emulator(
+            udid, sys_port, assigned_links, webdriver_url,
+            view_quantity, watch_seconds, random_behavior,
+            min_startime, max_startime, min_watchtime, max_watchtime
         )
-        threads.append(t)
-        t.start()
-        logger.log(f"→ Campaign thread started for {udid}")
-
-        if i < len(distribution) - 1:
-            logger.log(f"→ Waiting 5s before next emulator...")
-            time.sleep(5)
-
-    # ── wait for all threads to finish ──
-    for done_event in done_events:
-        done_event.wait()
+        logger.log(f"✓ [{i + 1}/{len(distribution)}] Done with {udid}.")
 
     logger.log("✓ Add Campaign completed for all emulators.")
     return True, "✓ Add Campaign completed for all emulators."
