@@ -84,8 +84,8 @@ def run_emulator(udid, system_port, stop_event, drivers):
         wait = WebDriverWait(driver, click_timeout)
 
         # ── click element after app opens with retry ──
-        logger.log(f"→ wait 5s before click element on {udid}...")
-        time.sleep(5) 
+        logger.log(f"→ wait 10s before click element on {udid}...")
+        time.sleep(10) 
         for attempt in range(5):
             try:
                 element = wait.until(EC.element_to_be_clickable(
