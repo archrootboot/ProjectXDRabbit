@@ -26,21 +26,6 @@ def build_options(udid, system_port):
     return options
 
 
-# ── Wait For App Foreground ───────────────────────────────────────────
-
-def wait_for_app_foreground(driver, udid, timeout=30):
-    pkg = os.getenv("APP_PACKAGE")
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            if driver.current_package == pkg:
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
-
-
 # ── Constants ─────────────────────────────────────────────────────────
 
 MAX_CAMPAIGNS = 3
@@ -156,7 +141,7 @@ def check_campaigns_for_emulator(udid, system_port, webdriver_url, results, resu
 
         pkg = os.getenv("APP_PACKAGE")
         driver.activate_app(pkg)
-        wait_for_app_foreground(driver, udid, timeout=30)
+        time.sleep(5)
 
         wait = WebDriverWait(driver, 30)
 
@@ -307,7 +292,7 @@ def delete_completed_for_emulator(udid, system_port, webdriver_url):
 
         pkg = os.getenv("APP_PACKAGE")
         driver.activate_app(pkg)
-        wait_for_app_foreground(driver, udid, timeout=30)
+        time.sleep(5)
 
         wait = WebDriverWait(driver, 20)
 

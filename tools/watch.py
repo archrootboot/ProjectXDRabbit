@@ -71,35 +71,6 @@ def watch_video(driver, udid, stop_event):
             return None
 
 
-    # ── Wait For App Foreground ───────────────────────────────────────
-
-    def wait_for_app_foreground(timeout=30):
-        """
-        Poll until the target app is in the foreground.
-        Replaces a fixed sleep — works even under heavy CPU load with 10+ emulators.
-        """
-        pkg            = os.getenv("APP_PACKAGE")        # com.view.ytrabbit
-        activity       = os.getenv("APP_MAIN_ACTIVITY")  # com.view.ytrabbit.MainActivity
-        short_activity = activity.split(".")[-1]          # MainActivity
-
-        deadline = time.time() + timeout
-
-        while time.time() < deadline:
-            try:
-                current_activity = driver.current_activity  # ".MainActivity" or "MainActivity"
-                current_package  = driver.current_package   # "com.view.ytrabbit"
-
-                if current_package == pkg and short_activity in current_activity:
-                    logger.log(f"[{udid}] ✓ App is in foreground ({current_activity})")
-                    return True
-            except Exception:
-                pass
-            time.sleep(1)
-
-        logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
-        return False
-
-
     # ── Restart App ───────────────────────────────────────────────────
 
     def restart_app():
@@ -119,11 +90,7 @@ def watch_video(driver, udid, stop_event):
             logger.log(f"[{udid}] ⚠ activate_app failed: {e}")
             return False
 
-        # ── wait for app to actually be in foreground instead of fixed sleep ──
-        reached = wait_for_app_foreground(timeout=30)
-        if not reached:
-            # Give a small extra buffer if the activity check wasn't conclusive
-            time.sleep(5)
+        time.sleep(5)
 
         # ── use a longer timeout for the post-restart click ──
         # 10+ emulators means the machine is under load — 45s gives enough headroom

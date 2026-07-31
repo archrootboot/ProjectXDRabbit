@@ -27,28 +27,6 @@ def build_options(udid, system_port):
     return options
 
 
-def wait_for_app_foreground(driver, udid, timeout=30):
-    """Poll until the target app activity is in the foreground."""
-    pkg            = os.getenv("APP_PACKAGE")        # com.view.ytrabbit
-    activity       = os.getenv("APP_MAIN_ACTIVITY")  # com.view.ytrabbit.MainActivity
-    short_activity = activity.split(".")[-1]          # MainActivity
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            current_activity = driver.current_activity  # ".MainActivity" or "MainActivity"
-            current_package  = driver.current_package   # "com.view.ytrabbit"
-
-            if current_package == pkg and short_activity in current_activity:
-                logger.log(f"[{udid}] ✓ App is in foreground ({current_activity})")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-
-    logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
-    return False
-
 
 def get_click_timeout(num_emulators):
     """Scale the WebDriverWait timeout based on how many emulators are running."""
@@ -77,8 +55,8 @@ def run_emulator(udid, system_port, stop_event, drivers):
         else:
             raise Exception(f"[{udid}] Failed to open app after 3 attempts")
 
-        # ── wait for app to be in foreground before clicking ──
-        wait_for_app_foreground(driver, udid, timeout=30)
+        # ── wait for app to load before clicking ──
+        time.sleep(5)
 
         # ── scale timeout based on number of active emulators ──
         click_timeout = get_click_timeout(len(drivers))

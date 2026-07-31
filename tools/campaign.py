@@ -150,22 +150,6 @@ def build_options(udid, system_port):
     return options
 
 
-# ── Wait For App Foreground ───────────────────────────────────────────
-
-def wait_for_app_foreground(driver, udid, timeout=30):
-    pkg = os.getenv("APP_PACKAGE")
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            if driver.current_package == pkg:
-                logger.log(f"[{udid}] ✓ App is in foreground ({driver.current_activity})")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
-    return False
-
 #options
 def view_quantity_option(driver, udid, value: str):
     wait = WebDriverWait(driver, 30)
@@ -374,7 +358,7 @@ def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, v
         # ── open app ──
         pkg = os.getenv("APP_PACKAGE")
         driver.activate_app(pkg)
-        wait_for_app_foreground(driver, udid, timeout=30)
+        time.sleep(5)
 
         wait = WebDriverWait(driver, 30)
 
@@ -505,7 +489,7 @@ def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime
             tmp_driver = webdriver.Remote(webdriver_url, options=build_options(udid, sys_port))
             pkg = os.getenv("APP_PACKAGE")
             tmp_driver.activate_app(pkg)
-            wait_for_app_foreground(tmp_driver, udid, timeout=30)
+            time.sleep(5)
 
             wait_tmp = WebDriverWait(tmp_driver, 20)
             my_campaign = wait_tmp.until(EC.element_to_be_clickable(
