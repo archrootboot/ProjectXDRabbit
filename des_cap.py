@@ -21,6 +21,8 @@ def build_options(udid, system_port):
     options.no_reset = True
     options.full_reset = False
     options.new_command_timeout = int(os.getenv("NEW_COMMAND_TIMEOUT"))
+    options.adb_exec_timeout = int(os.getenv("ADB_EXEC_TIMEOUT", 60000))
+    options.uiautomator2_server_launch_timeout = int(os.getenv("UIAUTOMATOR2_SERVER_LAUNCH_TIMEOUT", 60000))
     options.set_capability("systemPort", system_port)
     return options
 
