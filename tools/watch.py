@@ -4,6 +4,7 @@ from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import logger
+import tools.yt_links_get as yt_links_get
 
 
 def watch_video(driver, udid, stop_event):
@@ -14,6 +15,9 @@ def watch_video(driver, udid, stop_event):
     max_errors         = 3
     check_interval     = 5
     buffer_time        = 20
+
+    # ── load skip list once per session ───────────────────────────────
+    skip_list = yt_links_get.load_skip_list()
 
     # ── load watch time filter from .env ──────────────────────────────
     watch_time_raw = os.getenv("WATCH_TIME_VALUES", "").strip()
@@ -222,6 +226,20 @@ def watch_video(driver, udid, stop_event):
 
                 duration = int(time_value)
                 consecutive_skips = 0
+
+                # ── check YouTube URL against skip list ───────────────
+                should_skip, yt_url = yt_links_get.should_skip_video(
+                    driver, udid, skip_list
+                )
+                if should_skip:
+                    logger.log(f"[{udid}] ⏭ Skipping video (in skip list): {yt_url}")
+                    skip_button = wait.until(EC.element_to_be_clickable(
+                        (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
+                    ))
+                    skip_button.click()
+                    time.sleep(1)
+                    continue
+                # ─────────────────────────────────────────────────────
 
                 image_id = "com.view.ytrabbit:id/imageView_img2"
                 image_element = wait.until(EC.element_to_be_clickable(
