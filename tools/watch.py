@@ -75,35 +75,6 @@ def watch_video(driver, udid, stop_event):
             return None
 
 
-    # ── Wait For App Foreground ───────────────────────────────────────
-
-    def wait_for_app_foreground(timeout=30):
-        """
-        Poll until the target app is in the foreground.
-        Replaces a fixed sleep — works even under heavy CPU load with 10+ emulators.
-        """
-        pkg            = os.getenv("APP_PACKAGE")        # com.view.ytrabbit
-        activity       = os.getenv("APP_MAIN_ACTIVITY")  # com.view.ytrabbit.MainActivity
-        short_activity = activity.split(".")[-1]          # MainActivity
-
-        deadline = time.time() + timeout
-
-        while time.time() < deadline:
-            try:
-                current_activity = driver.current_activity  # ".MainActivity" or "MainActivity"
-                current_package  = driver.current_package   # "com.view.ytrabbit"
-
-                if current_package == pkg and short_activity in current_activity:
-                    logger.log(f"[{udid}] ✓ App is in foreground ({current_activity})")
-                    return True
-            except Exception:
-                pass
-            time.sleep(1)
-
-        logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
-        return False
-
-
     # ── Restart App ───────────────────────────────────────────────────
 
     def restart_app():
@@ -123,11 +94,7 @@ def watch_video(driver, udid, stop_event):
             logger.log(f"[{udid}] ⚠ activate_app failed: {e}")
             return False
 
-        # ── wait for app to actually be in foreground instead of fixed sleep ──
-        reached = wait_for_app_foreground(timeout=30)
-        if not reached:
-            # Give a small extra buffer if the activity check wasn't conclusive
-            time.sleep(5)
+        time.sleep(5)
 
         # ── use a longer timeout for the post-restart click ──
         # 10+ emulators means the machine is under load — 45s gives enough headroom
@@ -227,12 +194,25 @@ def watch_video(driver, udid, stop_event):
                 duration = int(time_value)
                 consecutive_skips = 0
 
-                # ── check YouTube URL against skip list ───────────────
-                should_skip, yt_url = yt_links_get.should_skip_video(
-                    driver, udid, skip_list
+                # ── locate play button (needed for click_fn lambda) ───
+                image_element = wait.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "com.view.ytrabbit:id/imageView_img2")
+                ))
+                time.sleep(1)
+
+                # ── check URL and click (or skip) ─────────────────────
+                yt_result = yt_links_get.check_and_play(
+                    driver   = driver,
+                    udid     = udid,
+                    skip_list= skip_list,
+                    click_fn = lambda: image_element.click()
                 )
-                if should_skip:
-                    logger.log(f"[{udid}] ⏭ Skipping video (in skip list): {yt_url}")
+
+                if yt_result == "skip":
+                    # URL was in skip list — back already pressed by
+                    # check_and_play; now use the app's own skip button
+                    # to load the next video
+                    logger.log(f"[{udid}] ⏭ Video skipped. Loading next...")
                     skip_button = wait.until(EC.element_to_be_clickable(
                         (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
                     ))
@@ -240,12 +220,7 @@ def watch_video(driver, udid, stop_event):
                     time.sleep(1)
                     continue
                 # ─────────────────────────────────────────────────────
-
-                image_id = "com.view.ytrabbit:id/imageView_img2"
-                image_element = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, image_id)
-                ))
-                image_element.click()
+                # yt_result == "play" or "unknown" → wait for video end
 
                 result = wait_for_video(duration)
 
@@ -278,6 +253,7 @@ def watch_video(driver, udid, stop_event):
                     (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
                 ))
                 skip_button.click()
+                time.sleep(1)
 
         except Exception as e:
             consecutive_errors += 1

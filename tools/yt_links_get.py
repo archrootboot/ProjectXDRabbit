@@ -1,6 +1,8 @@
 import os
 import re
 import subprocess
+import time
+import threading
 import logger
 
 SKIP_FILE = "skipytlink.txt"
@@ -12,6 +14,7 @@ def load_skip_list():
     """
     Load YouTube URLs from skipytlink.txt into a set.
     Creates the file automatically if it does not exist.
+    Ignores blank lines and lines starting with #.
     Returns a set of normalized URLs for fast lookup.
     """
     if not os.path.exists(SKIP_FILE):
@@ -34,72 +37,136 @@ def load_skip_list():
 
 def normalize_url(url):
     """
-    Extract the video ID and return a clean, consistent URL.
-    Handles both youtube.com/watch?v= and youtu.be/ formats.
-    Returns None if no valid video ID is found.
+    Extract the video ID and return a clean consistent URL.
+    Handles youtube.com/watch?v= and youtu.be/ formats.
+    Returns None if no valid 11-char video ID is found.
     """
     if not url:
         return None
-
     match = re.search(r'(?:v=|youtu\.be/)([\w\-]{11})', url)
     if match:
         return f"https://www.youtube.com/watch?v={match.group(1)}"
-
     return None
 
 
-# ── Extract YouTube URL from Page Source ──────────────────────────────
+# ── Clear Logcat Buffer ───────────────────────────────────────────────
 
-def get_yt_url_from_page(driver, udid):
+def clear_logcat(udid):
     """
-    Extract the YouTube URL from the current screen WITHOUT clicking.
-
-    Strategy A — content-desc attribute contains a YouTube URL
-    Strategy B — text attribute contains a YouTube URL
-    Strategy C — scan full page source XML for YouTube URLs
-    Strategy D — switch to WebView context and read current URL / source
-
-    Returns a normalized URL string, or None if not found.
+    Flush the logcat buffer on the target device so the next read
+    only contains events that happen AFTER this call.
     """
-
-    # ── Strategy A: content-desc ──────────────────────────────────────
     try:
-        from appium.webdriver.common.appiumby import AppiumBy
+        subprocess.run(
+            ["adb", "-s", udid, "logcat", "-c"],
+            capture_output=True,
+            timeout=5
+        )
+    except Exception as e:
+        logger.log(f"[{udid}][YT] ⚠ clear_logcat failed: {e}")
+
+
+# ── Capture URL from Logcat After Click ──────────────────────────────
+
+def capture_yt_url_from_logcat(udid, timeout=6):
+    """
+    Read logcat for up to `timeout` seconds after the play button is
+    clicked and return the first YouTube URL fired via Intent.
+
+    The app fires:
+        ActivityManager: START u0 {act=android.intent.action.VIEW
+                         dat=https://www.youtube.com/watch?v=XXXXX ...}
+
+    Returns a normalized URL string, or None if nothing is found in time.
+    """
+    pattern = re.compile(
+        r'dat=(https?://(?:www\.)?(?:youtube\.com|youtu\.be)/[^\s}]+)'
+    )
+
+    result_holder = [None]
+    stop_flag     = threading.Event()
+
+    def _read():
+        try:
+            proc = subprocess.Popen(
+                ["adb", "-s", udid, "logcat", "-v", "brief",
+                 "-s", "ActivityManager:I"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="ignore"
+            )
+            while not stop_flag.is_set():
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                m = pattern.search(line)
+                if m:
+                    url = normalize_url(m.group(1))
+                    if url:
+                        result_holder[0] = url
+                        stop_flag.set()
+                        break
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.log(f"[{udid}][YT] ⚠ logcat thread error: {e}")
+
+    t = threading.Thread(target=_read, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    stop_flag.set()   # make sure thread exits even if URL not found
+
+    return result_holder[0]
+
+
+# ── Page Source Strategies (pre-click, best effort) ───────────────────
+
+def _get_url_from_page(driver, udid):
+    """
+    Try to extract URL without clicking.
+    Returns a normalized URL or None.
+    These rarely work for native apps but are worth trying first.
+    """
+    from appium.webdriver.common.appiumby import AppiumBy
+
+    # Strategy A: content-desc attribute
+    try:
         el = driver.find_element(
             AppiumBy.XPATH,
             '//*[contains(@content-desc, "youtube.com") '
             'or contains(@content-desc, "youtu.be")]'
         )
-        raw = el.get_attribute("content-desc")
-        url = normalize_url(raw)
+        url = normalize_url(el.get_attribute("content-desc"))
         if url:
             logger.log(f"[{udid}][YT] ✓ URL via content-desc: {url}")
             return url
     except Exception:
         pass
 
-    # ── Strategy B: text attribute ────────────────────────────────────
+    # Strategy B: text attribute
     try:
-        from appium.webdriver.common.appiumby import AppiumBy
         el = driver.find_element(
             AppiumBy.XPATH,
             '//*[contains(@text, "youtube.com") '
             'or contains(@text, "youtu.be")]'
         )
-        raw = el.get_attribute("text")
-        url = normalize_url(raw)
+        url = normalize_url(el.get_attribute("text"))
         if url:
             logger.log(f"[{udid}][YT] ✓ URL via text attr: {url}")
             return url
     except Exception:
         pass
 
-    # ── Strategy C: scan page source XML ─────────────────────────────
+    # Strategy C: full page source XML scan
     try:
-        source = driver.page_source
         matches = re.findall(
             r'https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]{11}[^\s"\'<>]*',
-            source
+            driver.page_source
         )
         if matches:
             url = normalize_url(matches[0])
@@ -109,28 +176,21 @@ def get_yt_url_from_page(driver, udid):
     except Exception:
         pass
 
-    # ── Strategy D: WebView context ───────────────────────────────────
+    # Strategy D: WebView context
     try:
-        contexts = driver.contexts
-        for ctx in contexts:
+        for ctx in driver.contexts:
             if "WEBVIEW" not in ctx:
                 continue
             try:
                 driver.switch_to.context(ctx)
-
-                # try current URL first
-                current = driver.current_url
-                url = normalize_url(current)
+                url = normalize_url(driver.current_url)
                 if url:
-                    logger.log(f"[{udid}][YT] ✓ URL via WebView current_url: {url}")
+                    logger.log(f"[{udid}][YT] ✓ URL via WebView: {url}")
                     driver.switch_to.context("NATIVE_APP")
                     return url
-
-                # scan WebView page source
-                wv_source = driver.page_source
                 matches = re.findall(
                     r'https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]{11}[^\s"\'<>]*',
-                    wv_source
+                    driver.page_source
                 )
                 if matches:
                     url = normalize_url(matches[0])
@@ -138,7 +198,6 @@ def get_yt_url_from_page(driver, udid):
                         logger.log(f"[{udid}][YT] ✓ URL via WebView source: {url}")
                         driver.switch_to.context("NATIVE_APP")
                         return url
-
             except Exception:
                 pass
             finally:
@@ -149,64 +208,73 @@ def get_yt_url_from_page(driver, udid):
     except Exception:
         pass
 
-    logger.log(f"[{udid}][YT] ⚠ Could not extract YouTube URL from screen.")
     return None
 
 
-# ── Get YouTube URL via ADB Logcat (Post-Click Capture) ──────────────
+# ── Main Entry Point ──────────────────────────────────────────────────
 
-def get_yt_url_from_logcat(udid):
+def check_and_play(driver, udid, skip_list, click_fn):
     """
-    Capture YouTube URL from ADB logcat by reading recent ActivityManager logs.
-    Used as a fallback after a click has been made.
-    Returns a normalized URL string, or None if not found.
-    """
-    try:
-        result = subprocess.run(
-            ["adb", "-s", udid, "logcat", "-d", "-s", "ActivityManager:I"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        matches = re.findall(
-            r'dat=(https?://(?:www\.)?(?:youtube\.com|youtu\.be)/[^\s}]+)',
-            result.stdout
-        )
-        if matches:
-            url = normalize_url(matches[-1])   # use most recent match
-            if url:
-                logger.log(f"[{udid}][YT] ✓ URL via logcat: {url}")
-                return url
-    except Exception as e:
-        logger.log(f"[{udid}][YT] ⚠ logcat fallback failed: {e}")
+    Full skip-or-play flow. Call this instead of clicking the play
+    button directly.
 
-    return None
+    Flow:
+        1. Try to get URL from page source (no click needed).
+           → If found and in skip list: skip immediately, no click.
+           → If found and NOT in skip list: click and play normally.
 
+        2. If page source gives nothing (the common case for this app):
+           → Clear logcat buffer.
+           → Click the play button.
+           → Listen to logcat for up to 6s for the Intent URL.
+           → If URL appears and is in skip list: press back immediately.
+           → If URL not in skip list or not found: let it play normally.
 
-# ── Main Check ────────────────────────────────────────────────────────
-
-def should_skip_video(driver, udid, skip_list):
-    """
-    Check whether the current video should be skipped.
-
-    1. Extract the YouTube URL from the screen (no click needed).
-    2. Normalize it.
-    3. Check against the skip_list set.
+    Args:
+        driver    : Appium WebDriver instance
+        udid      : device/emulator ID string
+        skip_list : set of normalized URLs loaded by load_skip_list()
+        click_fn  : zero-argument callable that clicks the play button
+                    e.g. lambda: image_element.click()
 
     Returns:
-        (should_skip: bool, url: str | None)
-        should_skip = True  → video is in skipytlink.txt, do NOT click play
-        should_skip = False → video is new, safe to click play
+        "skip"    → video was skipped (back already pressed)
+        "play"    → video is playing, caller should wait normally
+        "unknown" → URL could not be determined, video is playing
     """
-    url = get_yt_url_from_page(driver, udid)
+
+    # ── Step 1: try page source first (no side effects) ───────────────
+    url = _get_url_from_page(driver, udid)
+
+    if url:
+        if url in skip_list:
+            logger.log(f"[{udid}][YT] ⏭ SKIP (pre-click) — in skip list: {url}")
+            return "skip"
+        else:
+            logger.log(f"[{udid}][YT] ▶ PLAY (pre-click) — not in skip list: {url}")
+            click_fn()
+            return "play"
+
+    # ── Step 2: URL not in page — click and capture from logcat ───────
+    logger.log(f"[{udid}][YT] → URL not in page source, using logcat capture...")
+
+    clear_logcat(udid)   # flush stale log entries
+    click_fn()           # click play — this fires the Intent
+
+    url = capture_yt_url_from_logcat(udid, timeout=6)
 
     if url is None:
-        logger.log(f"[{udid}][YT] ⚠ No URL found — allowing play (fail-open).")
-        return False, None
+        logger.log(f"[{udid}][YT] ⚠ URL not captured from logcat — letting video play.")
+        return "unknown"
+
+    logger.log(f"[{udid}][YT] ✓ Captured URL from logcat: {url}")
 
     if url in skip_list:
-        logger.log(f"[{udid}][YT] ⏭ SKIP — URL in skip list: {url}")
-        return True, url
+        logger.log(f"[{udid}][YT] ⏭ SKIP (post-click) — pressing back.")
+        time.sleep(1)          # brief pause so YouTube has started
+        driver.back()          # return to the app
+        time.sleep(1)
+        return "skip"
 
-    logger.log(f"[{udid}][YT] ▶ PLAY — URL not in skip list: {url}")
-    return False, url
+    logger.log(f"[{udid}][YT] ▶ PLAY — not in skip list.")
+    return "play"
