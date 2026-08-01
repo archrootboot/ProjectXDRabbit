@@ -86,8 +86,8 @@ class LogcatListener:
     def _read(self):
         try:
             self._proc = subprocess.Popen(
-                ["adb", "-s", self.udid, "logcat", "-v", "brief",
-                 "-s", "ActivityManager:I"],
+                ["adb", "-s", self.udid, "logcat",
+                 "-s", "ActivityManager:I", "IntentResolver:I"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
