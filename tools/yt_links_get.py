@@ -49,47 +49,44 @@ def normalize_url(url):
     return None
 
 
-# ── Clear Logcat Buffer ───────────────────────────────────────────────
+# ── Logcat Listener (starts BEFORE click) ────────────────────────────
 
-def clear_logcat(udid):
+class LogcatListener:
     """
-    Flush the logcat buffer on the target device so the next read
-    only contains events that happen AFTER this call.
+    Starts a logcat process in the background immediately.
+    Call .get_url(timeout) AFTER the click to collect the result.
+
+    Correct order (eliminates the timing race):
+        listener = LogcatListener(udid)
+        listener.start()          ← listening begins here
+        click_fn()                ← Intent fires here
+        url = listener.get_url()  ← result collected here
+        listener.stop()
     """
-    try:
-        subprocess.run(
-            ["adb", "-s", udid, "logcat", "-c"],
-            capture_output=True,
-            timeout=5
-        )
-    except Exception as e:
-        logger.log(f"[{udid}][YT] ⚠ clear_logcat failed: {e}")
 
-
-# ── Capture URL from Logcat After Click ──────────────────────────────
-
-def capture_yt_url_from_logcat(udid, timeout=6):
-    """
-    Read logcat for up to `timeout` seconds after the play button is
-    clicked and return the first YouTube URL fired via Intent.
-
-    The app fires:
-        ActivityManager: START u0 {act=android.intent.action.VIEW
-                         dat=https://www.youtube.com/watch?v=XXXXX ...}
-
-    Returns a normalized URL string, or None if nothing is found in time.
-    """
-    pattern = re.compile(
+    _YT_PATTERN = re.compile(
         r'dat=(https?://(?:www\.)?(?:youtube\.com|youtu\.be)/[^\s}]+)'
     )
 
-    result_holder = [None]
-    stop_flag     = threading.Event()
+    def __init__(self, udid):
+        self.udid         = udid
+        self._result      = [None]
+        self._stop_flag   = threading.Event()
+        self._ready_flag  = threading.Event()  # set when proc is reading
+        self._proc        = None
+        self._thread      = None
 
-    def _read():
+    def start(self):
+        """Spawn logcat process and wait until it is actively reading."""
+        self._thread = threading.Thread(target=self._read, daemon=True)
+        self._thread.start()
+        # wait up to 3s for the process to be ready before returning
+        self._ready_flag.wait(timeout=3)
+
+    def _read(self):
         try:
-            proc = subprocess.Popen(
-                ["adb", "-s", udid, "logcat", "-v", "brief",
+            self._proc = subprocess.Popen(
+                ["adb", "-s", self.udid, "logcat", "-v", "brief",
                  "-s", "ActivityManager:I"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -97,31 +94,40 @@ def capture_yt_url_from_logcat(udid, timeout=6):
                 encoding="utf-8",
                 errors="ignore"
             )
-            while not stop_flag.is_set():
-                line = proc.stdout.readline()
-                if not line:
+            self._ready_flag.set()   # signal: process is live and reading
+
+            for line in self._proc.stdout:
+                if self._stop_flag.is_set():
                     break
-                m = pattern.search(line)
+                m = self._YT_PATTERN.search(line)
                 if m:
                     url = normalize_url(m.group(1))
                     if url:
-                        result_holder[0] = url
-                        stop_flag.set()
+                        self._result[0] = url
+                        self._stop_flag.set()
                         break
-            proc.terminate()
+
+        except Exception as e:
+            logger.log(f"[{self.udid}][YT] ⚠ logcat listener error: {e}")
+            self._ready_flag.set()   # unblock start() even on error
+
+    def get_url(self, timeout=8):
+        """
+        Block until a YouTube URL is found or timeout expires.
+        Returns normalized URL string or None.
+        """
+        self._thread.join(timeout=timeout)
+        return self._result[0]
+
+    def stop(self):
+        """Terminate the background logcat process."""
+        self._stop_flag.set()
+        if self._proc:
             try:
-                proc.wait(timeout=2)
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
             except Exception:
                 pass
-        except Exception as e:
-            logger.log(f"[{udid}][YT] ⚠ logcat thread error: {e}")
-
-    t = threading.Thread(target=_read, daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-    stop_flag.set()   # make sure thread exits even if URL not found
-
-    return result_holder[0]
 
 
 # ── Page Source Strategies (pre-click, best effort) ───────────────────
@@ -215,64 +221,60 @@ def _get_url_from_page(driver, udid):
 
 def check_and_play(driver, udid, skip_list, click_fn):
     """
-    Full skip-or-play flow. Call this instead of clicking the play
-    button directly.
+    Full skip-or-play flow. Call this instead of clicking play directly.
 
     Flow:
-        1. Try to get URL from page source (no click needed).
-           → If found and in skip list: skip immediately, no click.
-           → If found and NOT in skip list: click and play normally.
+        1. Try page source strategies first (no click, no side effects).
+           → URL found + in skip list  : return "skip" immediately.
+           → URL found + not in list   : click and return "play".
 
-        2. If page source gives nothing (the common case for this app):
-           → Clear logcat buffer.
-           → Click the play button.
-           → Listen to logcat for up to 6s for the Intent URL.
-           → If URL appears and is in skip list: press back immediately.
-           → If URL not in skip list or not found: let it play normally.
-
-    Args:
-        driver    : Appium WebDriver instance
-        udid      : device/emulator ID string
-        skip_list : set of normalized URLs loaded by load_skip_list()
-        click_fn  : zero-argument callable that clicks the play button
-                    e.g. lambda: image_element.click()
+        2. URL not in page (common for this app):
+           → Start LogcatListener FIRST (eliminates timing race).
+           → Click play button         → Intent fires → YouTube opens.
+           → Collect URL from listener (up to 8s).
+           → URL in skip list          : driver.back() → return "skip".
+           → URL not in skip list      : return "play".
+           → URL not captured          : return "unknown" (fail-open).
 
     Returns:
-        "skip"    → video was skipped (back already pressed)
-        "play"    → video is playing, caller should wait normally
-        "unknown" → URL could not be determined, video is playing
+        "skip"    → video skipped, back already pressed by this function
+        "play"    → video is playing, caller waits normally
+        "unknown" → URL not captured, video is playing (fail-open)
     """
 
-    # ── Step 1: try page source first (no side effects) ───────────────
+    # ── Step 1: try page source (no side effects) ─────────────────────
     url = _get_url_from_page(driver, udid)
 
     if url:
         if url in skip_list:
             logger.log(f"[{udid}][YT] ⏭ SKIP (pre-click) — in skip list: {url}")
             return "skip"
-        else:
-            logger.log(f"[{udid}][YT] ▶ PLAY (pre-click) — not in skip list: {url}")
-            click_fn()
-            return "play"
+        logger.log(f"[{udid}][YT] ▶ PLAY (pre-click) — not in skip list: {url}")
+        click_fn()
+        return "play"
 
-    # ── Step 2: URL not in page — click and capture from logcat ───────
-    logger.log(f"[{udid}][YT] → URL not in page source, using logcat capture...")
+    # ── Step 2: start listener THEN click (fixes the timing race) ─────
+    logger.log(f"[{udid}][YT] → Starting logcat listener before click...")
 
-    clear_logcat(udid)   # flush stale log entries
-    click_fn()           # click play — this fires the Intent
+    listener = LogcatListener(udid)
+    listener.start()              # ← listening NOW, before any click
+    logger.log(f"[{udid}][YT] → Logcat listener ready. Clicking play...")
 
-    url = capture_yt_url_from_logcat(udid, timeout=6)
+    click_fn()                    # ← Intent fires here
+
+    url = listener.get_url(timeout=8)   # ← wait up to 8s for the URL
+    listener.stop()
 
     if url is None:
         logger.log(f"[{udid}][YT] ⚠ URL not captured from logcat — letting video play.")
         return "unknown"
 
-    logger.log(f"[{udid}][YT] ✓ Captured URL from logcat: {url}")
+    logger.log(f"[{udid}][YT] ✓ Captured URL: {url}")
 
     if url in skip_list:
         logger.log(f"[{udid}][YT] ⏭ SKIP (post-click) — pressing back.")
-        time.sleep(1)          # brief pause so YouTube has started
-        driver.back()          # return to the app
+        time.sleep(1)       # brief pause so YouTube has launched
+        driver.back()       # return to the app
         time.sleep(1)
         return "skip"
 
