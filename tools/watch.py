@@ -16,8 +16,8 @@ def watch_video(driver, udid, stop_event):
     check_interval     = 5
     buffer_time        = 20
 
-    # ── load skip list once per session ───────────────────────────────
-    skip_list = yt_links_get.load_skip_list()
+    # ── build skip hashes once per session ───────────────────────────
+    skip_hashes = yt_links_get.build_skip_hashes()
 
     # ── load watch time filter from .env ──────────────────────────────
     watch_time_raw = os.getenv("WATCH_TIME_VALUES", "").strip()
@@ -200,18 +200,16 @@ def watch_video(driver, udid, stop_event):
                 ))
                 time.sleep(1)
 
-                # ── check URL and click (or skip) ─────────────────────
+                # ── check thumbnail and click (or skip) ──────────────
                 yt_result = yt_links_get.check_and_play(
-                    driver   = driver,
-                    udid     = udid,
-                    skip_list= skip_list,
-                    click_fn = lambda: image_element.click()
+                    driver      = driver,
+                    udid        = udid,
+                    skip_hashes = skip_hashes,
+                    click_fn    = lambda: image_element.click()
                 )
 
                 if yt_result == "skip":
-                    # URL was in skip list — back already pressed by
-                    # check_and_play; now use the app's own skip button
-                    # to load the next video
+                    # thumbnail matched skip list — use app's skip button
                     logger.log(f"[{udid}] ⏭ Video skipped. Loading next...")
                     skip_button = wait.until(EC.element_to_be_clickable(
                         (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
