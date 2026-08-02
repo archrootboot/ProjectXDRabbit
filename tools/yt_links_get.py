@@ -41,10 +41,14 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────
 
-SKIP_THUMBS_DIR = "skip_thumbs"   # folder with reference thumbnails
-HASH_THRESHOLD  = 8               # Hamming distance ≤ this = same video
-                                  # 0 = identical, 10 = very similar
-                                  # strict match: keep at 8 or lower
+SKIP_THUMBS_DIR  = "skip_thumbs"  # folder with reference thumbnails
+
+# Dual-hash matching (aHash + wHash must both agree)
+# aHash catches overall brightness/color structure  → robust to overlays
+# wHash catches wavelet frequency patterns          → robust to resizing
+# Both must be within threshold to count as a match (reduces false positives)
+AHASH_THRESHOLD  = 6              # aHash Hamming distance ≤ this = match
+WHASH_THRESHOLD  = 10             # wHash Hamming distance ≤ this = match
 
 
 # ── Build Skip Hashes ─────────────────────────────────────────────────
@@ -75,9 +79,12 @@ def build_skip_hashes():
         fpath = os.path.join(SKIP_THUMBS_DIR, fname)
         try:
             img  = Image.open(fpath).convert("RGB")
-            h    = imagehash.phash(img)
-            hashes[fname] = h
-            logger.log(f"[YT] ✓ Loaded hash for: {fname}  [{h}]")
+            # store both hash types per image
+            hashes[fname] = {
+                "ahash": imagehash.average_hash(img),
+                "whash": imagehash.whash(img),
+            }
+            logger.log(f"[YT] ✓ Loaded hash for: {fname}")
         except Exception as e:
             logger.log(f"[YT] ⚠ Could not hash {fname}: {e}")
 
@@ -125,36 +132,51 @@ def _capture_thumbnail(driver, udid):
 
 def _is_skip_thumbnail(thumb_img, skip_hashes, udid):
     """
-    Compute pHash of thumb_img and compare against every entry in
-    skip_hashes.  Returns (True, matched_filename) or (False, None).
+    Dual-hash comparison: aHash + wHash must BOTH be within threshold.
 
-    Hamming distance <= HASH_THRESHOLD means "same video".
+    Why dual hash?
+      - Captured thumbnail has a play button overlay in the centre
+      - Reference thumbnail (from YouTube) has black bars and different crop
+      - pHash (DCT-based) is too sensitive to these structural differences
+      - aHash (average brightness) + wHash (wavelet) are both robust to
+        overlays, slight crops, and resolution differences — together they
+        give high accuracy with very low false-positive rate.
+
+    Returns (True, matched_filename) or (False, None).
     """
     if not skip_hashes or not _DEPS_OK:
         return False, None
 
     try:
-        current_hash = imagehash.phash(thumb_img)
+        cur_ahash = imagehash.average_hash(thumb_img)
+        cur_whash = imagehash.whash(thumb_img)
     except Exception as e:
-        logger.log(f"[{udid}][YT] ✗ pHash computation failed: {e}")
+        logger.log(f"[{udid}][YT] ✗ Hash computation failed: {e}")
         return False, None
 
-    best_dist = None
+    best_a    = None
+    best_w    = None
     best_name = None
 
-    for fname, ref_hash in skip_hashes.items():
-        dist = current_hash - ref_hash     # Hamming distance
-        if best_dist is None or dist < best_dist:
-            best_dist = dist
-            best_name = fname
+    for fname, ref in skip_hashes.items():
+        a_dist = cur_ahash - ref["ahash"]
+        w_dist = cur_whash - ref["whash"]
 
-    if best_dist is not None and best_dist <= HASH_THRESHOLD:
+        # both must match — dual vote reduces false positives
+        if a_dist <= AHASH_THRESHOLD and w_dist <= WHASH_THRESHOLD:
+            # pick closest overall match if multiple qualify
+            score = a_dist + w_dist
+            if best_name is None or score < (best_a + best_w):
+                best_a    = a_dist
+                best_w    = w_dist
+                best_name = fname
+
+    if best_name:
         logger.log(f"[{udid}][YT] ⏭ MATCH '{best_name}' "
-                   f"(distance={best_dist}) → skip.")
+                   f"(aHash={best_a} wHash={best_w}) → skip.")
         return True, best_name
 
-    logger.log(f"[{udid}][YT] ▶ No match "
-               f"(closest='{best_name}' distance={best_dist}) → play.")
+    logger.log(f"[{udid}][YT] ▶ No match → play.")
     return False, None
 
 
