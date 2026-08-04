@@ -158,6 +158,11 @@ def _is_skip_thumbnail(thumb_img, skip_hashes, udid):
     best_w    = None
     best_name = None
 
+    # track closest non-matching reference for the "no match" log
+    close_a    = None
+    close_w    = None
+    close_name = None
+
     for fname, ref in skip_hashes.items():
         a_dist = cur_ahash - ref["ahash"]
         w_dist = cur_whash - ref["whash"]
@@ -170,13 +175,26 @@ def _is_skip_thumbnail(thumb_img, skip_hashes, udid):
                 best_a    = a_dist
                 best_w    = w_dist
                 best_name = fname
+        else:
+            # track the closest non-matching reference for diagnostics
+            score = a_dist + w_dist
+            if close_name is None or score < (close_a + close_w):
+                close_a    = a_dist
+                close_w    = w_dist
+                close_name = fname
 
     if best_name:
         logger.log(f"[{udid}][YT] ⏭ MATCH '{best_name}' "
                    f"(aHash={best_a} wHash={best_w}) → skip.")
         return True, best_name
 
-    logger.log(f"[{udid}][YT] ▶ No match → play.")
+    if close_name:
+        logger.log(f"[{udid}][YT] ▶ No match → play. "
+                   f"Closest: '{close_name}' "
+                   f"(aHash={close_a} wHash={close_w} | "
+                   f"thresholds: aHash≤{AHASH_THRESHOLD} wHash≤{WHASH_THRESHOLD})")
+    else:
+        logger.log(f"[{udid}][YT] ▶ No match → play. (skip_thumbs/ is empty)")
     return False, None
 
 
