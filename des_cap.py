@@ -21,31 +21,11 @@ def build_options(udid, system_port):
     options.no_reset = True
     options.full_reset = False
     options.new_command_timeout = int(os.getenv("NEW_COMMAND_TIMEOUT"))
+    options.adb_exec_timeout = int(os.getenv("ADB_EXEC_TIMEOUT", 60000))
+    options.uiautomator2_server_launch_timeout = int(os.getenv("UIAUTOMATOR2_SERVER_LAUNCH_TIMEOUT", 60000))
     options.set_capability("systemPort", system_port)
     return options
 
-
-def wait_for_app_foreground(driver, udid, timeout=30):
-    """Poll until the target app activity is in the foreground."""
-    pkg            = os.getenv("APP_PACKAGE")        # com.view.ytrabbit
-    activity       = os.getenv("APP_MAIN_ACTIVITY")  # com.view.ytrabbit.MainActivity
-    short_activity = activity.split(".")[-1]          # MainActivity
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            current_activity = driver.current_activity  # ".MainActivity" or "MainActivity"
-            current_package  = driver.current_package   # "com.view.ytrabbit"
-
-            if current_package == pkg and short_activity in current_activity:
-                logger.log(f"[{udid}] ✓ App is in foreground ({current_activity})")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-
-    logger.log(f"[{udid}] ⚠ App did not reach foreground within {timeout}s — proceeding anyway")
-    return False
 
 
 def get_click_timeout(num_emulators):
@@ -75,8 +55,8 @@ def run_emulator(udid, system_port, stop_event, drivers):
         else:
             raise Exception(f"[{udid}] Failed to open app after 3 attempts")
 
-        # ── wait for app to be in foreground before clicking ──
-        wait_for_app_foreground(driver, udid, timeout=30)
+        # ── wait for app to load before clicking ──
+        time.sleep(5)
 
         # ── scale timeout based on number of active emulators ──
         click_timeout = get_click_timeout(len(drivers))
@@ -84,6 +64,8 @@ def run_emulator(udid, system_port, stop_event, drivers):
         wait = WebDriverWait(driver, click_timeout)
 
         # ── click element after app opens with retry ──
+        logger.log(f"→ wait 10s before click element on {udid}...")
+        time.sleep(10) 
         for attempt in range(5):
             try:
                 element = wait.until(EC.element_to_be_clickable(
@@ -94,7 +76,7 @@ def run_emulator(udid, system_port, stop_event, drivers):
                 break
             except Exception as e:
                 logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/5 failed to click element: {e}")
-                time.sleep(5)
+                time.sleep(10)
         else:
             raise Exception(f"[{udid}] Failed to click element after 5 attempts")
 
@@ -201,8 +183,8 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
         logger.log(f"→ Thread started for {udid}")
 
         if i < len(emulators) - 1:
-            logger.log(f"→ Waiting 5s before next thread...")
-            time.sleep(5)
+            logger.log(f"→ Waiting 10s before next thread...")
+            time.sleep(10)
 
     return new_threads, new_stop_events, new_drivers
 
@@ -241,8 +223,8 @@ def main_pro():
         logger.log(f"→ Thread started for {udid}")
 
         if i < len(emulators) - 1:
-            logger.log(f"→ Waiting 5s before next thread...")
-            time.sleep(5)
+            logger.log(f"→ Waiting 10s before next thread...")
+            time.sleep(10)
 
     return threads, stop_events, drivers
 
