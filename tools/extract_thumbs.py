@@ -28,6 +28,7 @@ import re
 import urllib.request
 import urllib.error
 from dotenv import load_dotenv
+from PIL import Image
 
 load_dotenv()
 
@@ -68,6 +69,20 @@ _CONTENT_Y_START = 57    # first row of content (black bar above)
 _CONTENT_Y_END   = 402   # last row of content  (black bar below)
 _CONTENT_H       = _CONTENT_Y_END - _CONTENT_Y_START + 1   # 346 px
 _CONTENT_W       = _CANVAS_W                                # 540 px
+
+# ── Play-button overlay constants ─────────────────────────────────────
+# Matches the white circular play button burned into app-captured
+# thumbnails: an opaque white circle centered on the canvas, with a
+# triangle "cut out" of it so the underlying image shows through
+# (the classic YouTube-style play icon). Ratios below were measured
+# directly off a captured thumbnail (thumb_1785698915.png):
+#   circle center ≈ canvas center, radius ≈ 63px on a 540×460 canvas
+#   triangle: left edge  ≈ cx - 0.206*r,  apex ≈ cx + 0.381*r
+#             top/bottom ≈ cy ∓ 0.286*r
+_PLAY_BTN_RADIUS_RATIO   = 63 / 460   # radius as a fraction of canvas height
+_PLAY_TRI_LEFT_RATIO     = 0.206      # left edge offset from center, ×radius
+_PLAY_TRI_APEX_RATIO     = 0.381      # apex offset from center, ×radius
+_PLAY_TRI_HALF_H_RATIO   = 0.286      # half-height offset from center, ×radius
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -144,6 +159,48 @@ def _convert_to_captured_format(img):
     return canvas
 
 
+def _add_play_button(img):
+    """
+    Draw the white play-button overlay onto a converted (540×460)
+    thumbnail so it visually matches the app-captured format, which
+    always has this icon burned into the center.
+
+    The button is an opaque white circle with a triangular "window"
+    cut out of it, so the image underneath shows through the triangle
+    (this is what makes it read as a play icon rather than a plain
+    white blob). Position/size are derived from the canvas size so
+    this still lines up correctly even if _CANVAS_W/_CANVAS_H change.
+
+    Returns a new PIL.Image (input is not modified).
+    """
+    from PIL import ImageDraw
+
+    result = img.copy()
+    draw   = ImageDraw.Draw(result)
+
+    cx = _CANVAS_W / 2
+    cy = _CANVAS_H / 2
+    r  = _CANVAS_H * _PLAY_BTN_RADIUS_RATIO
+
+    # ── opaque white circle ───────────────────────────────────────────
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 255, 255))
+
+    # ── triangle cutout: paste original content back inside it ───────
+    tri_left = cx - _PLAY_TRI_LEFT_RATIO * r
+    tri_apex = cx + _PLAY_TRI_APEX_RATIO * r
+    tri_top  = cy - _PLAY_TRI_HALF_H_RATIO * r
+    tri_bot  = cy + _PLAY_TRI_HALF_H_RATIO * r
+
+    mask = Image.new("L", (_CANVAS_W, _CANVAS_H), 0)
+    ImageDraw.Draw(mask).polygon(
+        [(tri_left, tri_top), (tri_left, tri_bot), (tri_apex, cy)],
+        fill=255,
+    )
+    result.paste(img, (0, 0), mask)
+
+    return result
+
+
 def _fetch_thumbnail(video_id, save_path):
     """
     Try each thumbnail quality URL in order and save the first
@@ -169,6 +226,7 @@ def _fetch_thumbnail(video_id, save_path):
                 import io
                 raw_img    = Image.open(io.BytesIO(data)).convert("RGB")
                 converted  = _convert_to_captured_format(raw_img)
+                converted  = _add_play_button(converted)
                 fmt        = "PNG" if THUMB_EXT == "png" else "JPEG"
                 converted.save(save_path, format=fmt)
             except ImportError:
