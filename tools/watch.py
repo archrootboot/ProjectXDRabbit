@@ -215,7 +215,7 @@ def watch_video(driver, udid, stop_event):
                         (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
                     ))
                     skip_button.click()
-                    time.sleep(1)
+                    time.sleep(2)
                     continue
                 # ─────────────────────────────────────────────────────
                 # yt_result == "play" or "unknown" → wait for video end
@@ -251,7 +251,7 @@ def watch_video(driver, udid, stop_event):
                     (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
                 ))
                 skip_button.click()
-                time.sleep(1)
+                time.sleep(2)
 
         except Exception as e:
             consecutive_errors += 1
