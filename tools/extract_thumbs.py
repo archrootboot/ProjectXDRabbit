@@ -11,6 +11,12 @@ YouTube provides thumbnails at multiple qualities:
     mqdefault      → 320×180
     default        → 120×90
 
+Every downloaded thumbnail is automatically converted to match the
+captured-thumbnail format used by the app (540×460, black bars at
+rows 0–56 top and rows 403–459 bottom, content at rows 57–402).
+This ensures extracted thumbnails can be compared reliably against
+app-captured ones without any extra processing step.
+
 Image format (PNG or JPG) is controlled by THUMB_IMAGE_EXT in .env.
 Image quality is controlled by THUMB_QUALITY in .env.
 Images are named by video ID:  <VIDEO_ID>.<ext>
@@ -53,6 +59,16 @@ if _preferred not in _VALID_QUALITIES:
 # build fallback list: preferred first, then the rest in order
 _YT_QUALITY_ORDER = [_preferred] + [q for q in _VALID_QUALITIES if q != _preferred]
 
+# ── Captured-thumbnail format constants ───────────────────────────────
+# These match the exact layout of thumbnails captured by the app,
+# so extracted thumbnails can be compared against them reliably.
+_CANVAS_W        = 540   # total canvas width
+_CANVAS_H        = 460   # total canvas height
+_CONTENT_Y_START = 57    # first row of content (black bar above)
+_CONTENT_Y_END   = 402   # last row of content  (black bar below)
+_CONTENT_H       = _CONTENT_Y_END - _CONTENT_Y_START + 1   # 346 px
+_CONTENT_W       = _CANVAS_W                                # 540 px
+
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -70,6 +86,62 @@ def _extract_video_id(url):
     url = url.strip()
     match = re.search(r'(?:v=|youtu\.be/|shorts/)([\w\-]{11})', url)
     return match.group(1) if match else None
+
+
+def _convert_to_captured_format(img):
+    """
+    Convert any downloaded thumbnail to match the captured-thumbnail
+    format used by the app (540×460, black bars top/bottom).
+
+    Steps:
+      1. Strip the source image's own black bars to get pure content.
+      2. Scale content to fill _CONTENT_H tall (preserving aspect ratio).
+      3. Crop width to _CONTENT_W centered (removes extra width from
+         wide 16:9 sources).
+      4. Paste onto a _CANVAS_W × _CANVAS_H black canvas at y=_CONTENT_Y_START.
+
+    Returns a new PIL.Image ready to save.
+    """
+    import numpy as np
+
+    arr = np.array(img)
+
+    # ── 1. Find and strip source black bars ───────────────────────────
+    row_means = arr.mean(axis=(1, 2))
+    col_means = arr.mean(axis=(0, 2))
+
+    content_rows = [r for r, v in enumerate(row_means) if v > 10]
+    content_cols = [c for c, v in enumerate(col_means) if v > 10]
+
+    if content_rows and content_cols:
+        src_y0, src_y1 = content_rows[0],  content_rows[-1]
+        src_x0, src_x1 = content_cols[0],  content_cols[-1]
+        content = img.crop((src_x0, src_y0, src_x1 + 1, src_y1 + 1))
+    else:
+        content = img   # no black bars detected — use full image
+
+    src_w, src_h = content.size
+
+    # ── 2. Scale to fill _CONTENT_H (keep aspect ratio) ──────────────
+    scale   = _CONTENT_H / src_h
+    new_w   = round(src_w * scale)
+    scaled  = content.resize((new_w, _CONTENT_H), Image.LANCZOS)
+
+    # ── 3. Crop width to _CONTENT_W centered ─────────────────────────
+    if new_w > _CONTENT_W:
+        x_off   = (new_w - _CONTENT_W) // 2
+        scaled  = scaled.crop((x_off, 0, x_off + _CONTENT_W, _CONTENT_H))
+    elif new_w < _CONTENT_W:
+        # narrower than target — center with black side bars
+        canvas_c = Image.new("RGB", (_CONTENT_W, _CONTENT_H), (0, 0, 0))
+        x_off    = (_CONTENT_W - new_w) // 2
+        canvas_c.paste(scaled, (x_off, 0))
+        scaled   = canvas_c
+
+    # ── 4. Place on full black canvas ────────────────────────────────
+    canvas = Image.new("RGB", (_CANVAS_W, _CANVAS_H), (0, 0, 0))
+    canvas.paste(scaled, (0, _CONTENT_Y_START))
+    return canvas
 
 
 def _fetch_thumbnail(video_id, save_path):
@@ -90,19 +162,18 @@ def _fetch_thumbnail(video_id, save_path):
             if len(data) < 2000:
                 continue
 
-            # convert to PNG if needed (jpg bytes → PIL → save as png)
-            if THUMB_EXT in ("png",):
-                try:
-                    from PIL import Image
-                    import io
-                    img = Image.open(io.BytesIO(data)).convert("RGB")
-                    img.save(save_path, format="PNG")
-                except ImportError:
-                    # Pillow not available — save raw jpg bytes anyway
-                    save_path = save_path.rsplit(".", 1)[0] + ".jpg"
-                    with open(save_path, "wb") as f:
-                        f.write(data)
-            else:
+            # Convert to captured-thumbnail format (540×460 with black bars)
+            # so the script can match extracted thumbnails against app captures.
+            try:
+                from PIL import Image
+                import io
+                raw_img    = Image.open(io.BytesIO(data)).convert("RGB")
+                converted  = _convert_to_captured_format(raw_img)
+                fmt        = "PNG" if THUMB_EXT == "png" else "JPEG"
+                converted.save(save_path, format=fmt)
+            except ImportError:
+                # Pillow not available — save raw bytes without conversion
+                save_path = save_path.rsplit(".", 1)[0] + ".jpg"
                 with open(save_path, "wb") as f:
                     f.write(data)
 
