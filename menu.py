@@ -3,6 +3,7 @@ import subprocess
 import des_cap
 import tools.campaign as campaign
 import tools.campaign_status as campaign_status
+import tools.extract_thumbs as extract_thumbs
 import logger
 
 current_threads = {}
@@ -139,6 +140,10 @@ def option_nine():
     campaign_status.run_delete_completed()
 
 
+
+def option_ten():
+    extract_thumbs.run_extract_thumbs()
+
 def stop_appium():
     global appium_process
     if appium_process and appium_process.poll() is None:
@@ -189,9 +194,10 @@ def show_menu():
         print("7. Add Campaign")
         print("8. Campaign Status")
         print("9. Delete Complete Campaigns")
-        print("10. Exit")
+        print("10. Extract Thumbnails")
+        print("11. Exit")
 
-        choice = input("Enter your choice (1-10): ").strip()
+        choice = input("Enter your choice (1-11): ").strip()
 
         if choice == "1":
             option_one()
@@ -212,6 +218,8 @@ def show_menu():
         elif choice == "9":
             option_nine()
         elif choice == "10":
+            option_ten()
+        elif choice == "11":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
@@ -225,7 +233,7 @@ def show_menu():
             print("Exiting program. Goodbye!")
             break
         else:
-            print("Invalid selection. Please try again (1-10).")
+            print("Invalid selection. Please try again (1-11).")
 
 
 if __name__ == "__main__":

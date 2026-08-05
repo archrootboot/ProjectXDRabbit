@@ -4,6 +4,7 @@ from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import logger
+import tools.yt_links_get as yt_links_get
 
 
 def watch_video(driver, udid, stop_event):
@@ -14,6 +15,9 @@ def watch_video(driver, udid, stop_event):
     max_errors         = 3
     check_interval     = 5
     buffer_time        = 20
+
+    # ── build skip hashes once per session ───────────────────────────
+    skip_hashes = yt_links_get.build_skip_hashes()
 
     # ── load watch time filter from .env ──────────────────────────────
     watch_time_raw = os.getenv("WATCH_TIME_VALUES", "").strip()
@@ -190,12 +194,31 @@ def watch_video(driver, udid, stop_event):
                 duration = int(time_value)
                 consecutive_skips = 0
 
-                image_id = "com.view.ytrabbit:id/imageView_img2"
+                # ── locate play button (needed for click_fn lambda) ───
                 image_element = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, image_id)
+                    (AppiumBy.ID, "com.view.ytrabbit:id/imageView_img2")
                 ))
                 time.sleep(1)
-                image_element.click()
+
+                # ── check thumbnail and click (or skip) ──────────────
+                yt_result = yt_links_get.check_and_play(
+                    driver      = driver,
+                    udid        = udid,
+                    skip_hashes = skip_hashes,
+                    click_fn    = lambda: image_element.click()
+                )
+
+                if yt_result == "skip":
+                    # thumbnail matched skip list — use app's skip button
+                    logger.log(f"[{udid}] ⏭ Video skipped. Loading next...")
+                    skip_button = wait.until(EC.element_to_be_clickable(
+                        (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
+                    ))
+                    skip_button.click()
+                    time.sleep(1)
+                    continue
+                # ─────────────────────────────────────────────────────
+                # yt_result == "play" or "unknown" → wait for video end
 
                 result = wait_for_video(duration)
 
