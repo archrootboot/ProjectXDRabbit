@@ -1,4 +1,12 @@
+#
+
+skipvideo_link.txt
 campaign_link.txt
+skip_thumbs/
+
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
