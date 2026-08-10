@@ -11,6 +11,7 @@ current_threads = {}
 current_stop_events = {}
 current_drivers = {}
 current_pause_events = {}
+current_paused_ack_events = {}
 appium_process = None
 
 
@@ -32,7 +33,7 @@ def option_one():
 
 
 def option_two():
-    global current_threads, current_stop_events, current_drivers, current_pause_events
+    global current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events
 
     if current_threads:
         running = [udid for udid, t in current_threads.items() if t.is_alive()]
@@ -42,7 +43,7 @@ def option_two():
             return
 
     print("\nExecuting The Script...")
-    current_threads, current_stop_events, current_drivers, current_pause_events = des_cap.main_pro()
+    current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events = des_cap.main_pro()
 
 
 def option_three():
@@ -58,18 +59,19 @@ def option_three():
 
 
 def option_four():
-    global current_threads, current_stop_events, current_drivers, current_pause_events
+    global current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events
 
     if not current_threads:
         print("⚠ No script running yet. Use option 2 to start.")
         return
 
     print("\n→ Scanning for new emulators...")
-    new_threads, new_stop_events, new_drivers, new_pause_events = des_cap.add_new_emulators(
+    new_threads, new_stop_events, new_drivers, new_pause_events, new_paused_ack_events = des_cap.add_new_emulators(
         current_threads,
         current_stop_events,
         current_drivers,
-        current_pause_events
+        current_pause_events,
+        current_paused_ack_events
     )
 
     if not new_threads:
@@ -80,6 +82,7 @@ def option_four():
     current_stop_events.update(new_stop_events)
     current_drivers.update(new_drivers)
     current_pause_events.update(new_pause_events)
+    current_paused_ack_events.update(new_paused_ack_events)
 
     print(f"✓ Added {len(new_threads)} new emulator(s): {list(new_threads.keys())}")
 
@@ -144,6 +147,7 @@ def option_seven():
             current_threads=current_threads,
             current_drivers=current_drivers,
             current_pause_events=current_pause_events,
+            current_paused_ack_events=current_paused_ack_events,
             view_quantity=view_quantity,
             watch_seconds=watch_seconds,
             random_behavior=random_behavior,
