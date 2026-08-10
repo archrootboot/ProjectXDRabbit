@@ -392,6 +392,13 @@ def _do_add_campaign_on_driver(driver, udid, pending_links, view_quantity, watch
         driver.activate_app(pkg)
         time.sleep(5)
 
+        #Back to main screen
+        logger.log(f"[{udid}] → Back to main screen...")
+        wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backs")
+        )).click()
+        time.sleep(2)
+
         # ── click My Campaign ──
         logger.log(f"[{udid}] → Clicking My Campaign...")
         wait.until(EC.element_to_be_clickable(
