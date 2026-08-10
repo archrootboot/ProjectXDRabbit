@@ -4,6 +4,7 @@ from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
+import threading
 import tools.grabber as grabber
 import logger
 import os
@@ -111,10 +112,6 @@ def distribute_links(pending, available_slots_map):
     per-emulator available slot counts.
 
     available_slots_map: { udid: available_slot_count }
-
-    Example: 4 pending links, emulator1 has 2 free, emulator2 has 3 free
-             → emulator1: [(link1, idx1), (link2, idx2)],
-               emulator2: [(link3, idx3), (link4, idx4)]
     """
     distribution = {}
     cursor = 0
@@ -150,14 +147,15 @@ def build_options(udid, system_port):
     return options
 
 
-#options
+# ── Option Helpers ────────────────────────────────────────────────────
+
 def view_quantity_option(driver, udid, value: str):
     wait = WebDriverWait(driver, 30)
     view_quantity_click = wait.until(EC.element_to_be_clickable(
     (AppiumBy.ID, "com.view.ytrabbit:id/textView_view")
     ))
     view_quantity_click.click()
-    
+
     time.sleep(3)
     spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
     spinner.click()
@@ -188,7 +186,7 @@ def watch_seconds_option(driver, udid, value: str):
     (AppiumBy.ID, "com.view.ytrabbit:id/textView_sec")
     ))
     watch_seconds_click.click()
-    
+
     time.sleep(3)
     spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
     spinner.click()
@@ -212,7 +210,7 @@ def watch_seconds_option(driver, udid, value: str):
     ))
     watch_seconds_choose.click()
 
-def random_behavior_option(driver, udid,):
+def random_behavior_option(driver, udid):
     wait = WebDriverWait(driver, 30)
     random_behavior_button = wait.until(EC.element_to_be_clickable(
     (AppiumBy.ID, "com.view.ytrabbit:id/switch_random")
@@ -287,7 +285,7 @@ def min_watchtime_option(driver, udid, value: str):
     ))
     min_watchtime_click.click()
 
-    time.sleep(3)  
+    time.sleep(3)
     spinner = driver.find_element(AppiumBy.CLASS_NAME, "android.widget.Spinner")
     spinner.click()
     logger.log(f"[{udid}] ✓  min watch time spinner clicked...")
@@ -341,13 +339,14 @@ def max_watchtime_option(driver, udid, value: str):
     max_watchtime_choose.click()
 
 
-# ── Add Campaign For One Emulator ─────────────────────────────────────
+# ── Add Campaign For One Emulator (standalone — own driver) ───────────
 
 def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
     """
     pending_links: list of (link_url, line_index) tuples.
     Each link is marked 'done' in campaign_link.txt immediately after it is
     successfully submitted to the app.
+    Opens its own driver connection (used by the original Add Campaign flow).
     """
     driver = None
     try:
@@ -355,95 +354,11 @@ def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, v
         driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
         logger.log(f"[{udid}] ✓ Connected")
 
-        # ── open app ──
-        pkg = os.getenv("APP_PACKAGE")
-        driver.activate_app(pkg)
-        time.sleep(5)
-
-        wait = WebDriverWait(driver, 30)
-
-        # ── click My Campaign ──
-        logger.log(f"[{udid}] → Clicking My Campaign...")
-        my_campaign = wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
-        ))
-        my_campaign.click()
-        logger.log(f"[{udid}] ✓ My Campaign opened")
-        time.sleep(2)
-
-        # ── add each link ──
-        for i, (link, line_index) in enumerate(pending_links):
-            logger.log(f"[{udid}] → Adding link {i + 1}/{len(pending_links)}: {link}")
-
-            # ── input field ──
-            input_field = wait.until(EC.element_to_be_clickable(
-                (AppiumBy.ID, "com.view.ytrabbit:id/editText")
-            ))
-            input_field.clear()
-            input_field.send_keys(link)
-            logger.log(f"[{udid}] ✓ Link entered")
-
-            # ── click ADD ──
-            add_button = wait.until(EC.element_to_be_clickable(
-                (AppiumBy.ID, "com.view.ytrabbit:id/button")
-            ))
-            add_button.click()
-            logger.log(f"[{udid}] ✓ ADD clicked — waiting for video settings screen...")
-
-
-
-            # ── wait for video settings screen (Screen 3) ──
-            # ── YOUR CODE GOES HERE ───────────────────────
-            view_quantity_option(driver, udid, str(view_quantity))
-            logger.log(f"[{udid}] ✓ view quantity option done...")
-
-            watch_seconds_option(driver, udid, str(watch_seconds))
-            logger.log(f"[{udid}] ✓ watch seconds option done...")
-
-            if random_behavior:
-                random_behavior_option(driver, udid)
-                logger.log(f"[{udid}] ✓ random behavior option done...")
-
-                min_startime_option(driver, udid, str(min_startime))
-                logger.log(f"[{udid}] ✓ min start time option done...")
-
-                max_startime_option(driver, udid, str(max_startime))
-                logger.log(f"[{udid}] ✓ max start time option done...")
-
-                min_watchtime_option(driver, udid, str(min_watchtime))
-                logger.log(f"[{udid}] ✓ min watch time option done...")
-
-                max_watchtime_option(driver, udid, str(max_watchtime))
-                logger.log(f"[{udid}] ✓ max watch time option done...")
-
-            driver.find_element(
-            AppiumBy.ANDROID_UIAUTOMATOR,
-            'new UiScrollable(new UiSelector().scrollable(true))'
-            '.scrollIntoView(new UiSelector().text("Done"))'
-            ).click()
-            logger.log(f"[{udid}] ✓ All options Done ...")
-
-            
-            # ─────────────────────────────────────────────
-
-
-
-            time.sleep(3)
-
-            # ── mark this link as done in campaign_link.txt ──
-            mark_link_done(line_index)
-            logger.log(f"[{udid}] ✓ Link {i + 1} added and marked done")
-
-            if i < len(pending_links) - 1:
-                time.sleep(2)  # small gap between links
-
-        logger.log(f"[{udid}] ✓ All {len(pending_links)} campaign(s) added.")
-
-        # ── navigate back to main screen ──
-        wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
-        )).click()
-        logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+        _do_add_campaign_on_driver(
+            driver, udid, pending_links,
+            view_quantity, watch_seconds, random_behavior,
+            min_startime, max_startime, min_watchtime, max_watchtime
+        )
 
     except Exception as e:
         logger.log(f"[{udid}] ✗ Campaign error: {e}")
@@ -456,8 +371,287 @@ def add_campaign_for_emulator(udid, system_port, pending_links, webdriver_url, v
                 pass
 
 
+# ── Core Campaign UI Work (shared by both flows) ──────────────────────
 
-# ── Main Campaign Runner ──────────────────────────────────────────────
+def _do_add_campaign_on_driver(driver, udid, pending_links, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
+    """
+    Perform the actual campaign UI steps on an already-open driver.
+    Used by both the standalone flow (add_campaign_for_emulator) and the
+    live-script flow (add_campaign_on_running_emulator).
+    """
+    pkg = os.getenv("APP_PACKAGE")
+    wait = WebDriverWait(driver, 30)
+
+    # ── open app ──
+    driver.activate_app(pkg)
+    time.sleep(5)
+
+    # ── click My Campaign ──
+    logger.log(f"[{udid}] → Clicking My Campaign...")
+    my_campaign = wait.until(EC.element_to_be_clickable(
+        (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
+    ))
+    my_campaign.click()
+    logger.log(f"[{udid}] ✓ My Campaign opened")
+    time.sleep(2)
+
+    # ── add each link ──
+    for i, (link, line_index) in enumerate(pending_links):
+        logger.log(f"[{udid}] → Adding link {i + 1}/{len(pending_links)}: {link}")
+
+        # ── input field ──
+        input_field = wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/editText")
+        ))
+        input_field.clear()
+        input_field.send_keys(link)
+        logger.log(f"[{udid}] ✓ Link entered")
+
+        # ── click ADD ──
+        add_button = wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/button")
+        ))
+        add_button.click()
+        logger.log(f"[{udid}] ✓ ADD clicked — waiting for video settings screen...")
+
+        view_quantity_option(driver, udid, str(view_quantity))
+        logger.log(f"[{udid}] ✓ view quantity option done...")
+
+        watch_seconds_option(driver, udid, str(watch_seconds))
+        logger.log(f"[{udid}] ✓ watch seconds option done...")
+
+        if random_behavior:
+            random_behavior_option(driver, udid)
+            logger.log(f"[{udid}] ✓ random behavior option done...")
+
+            min_startime_option(driver, udid, str(min_startime))
+            logger.log(f"[{udid}] ✓ min start time option done...")
+
+            max_startime_option(driver, udid, str(max_startime))
+            logger.log(f"[{udid}] ✓ max start time option done...")
+
+            min_watchtime_option(driver, udid, str(min_watchtime))
+            logger.log(f"[{udid}] ✓ min watch time option done...")
+
+            max_watchtime_option(driver, udid, str(max_watchtime))
+            logger.log(f"[{udid}] ✓ max watch time option done...")
+
+        driver.find_element(
+            AppiumBy.ANDROID_UIAUTOMATOR,
+            'new UiScrollable(new UiSelector().scrollable(true))'
+            '.scrollIntoView(new UiSelector().text("Done"))'
+        ).click()
+        logger.log(f"[{udid}] ✓ All options Done ...")
+
+        time.sleep(3)
+
+        # ── mark this link as done in campaign_link.txt ──
+        mark_link_done(line_index)
+        logger.log(f"[{udid}] ✓ Link {i + 1} added and marked done")
+
+        if i < len(pending_links) - 1:
+            time.sleep(2)  # small gap between links
+
+    logger.log(f"[{udid}] ✓ All {len(pending_links)} campaign(s) added.")
+
+    # ── navigate back to main screen ──
+    wait.until(EC.element_to_be_clickable(
+        (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+    )).click()
+    logger.log(f"[{udid}] ✓ Navigated back to main screen.")
+
+    # ── re-enter watch job screen so watch_video resumes correctly ──
+    logger.log(f"[{udid}] → Re-entering watch screen...")
+    re_enter_wait = WebDriverWait(driver, 30)
+    watch_btn = re_enter_wait.until(EC.element_to_be_clickable(
+        (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
+    ))
+    watch_btn.click()
+    logger.log(f"[{udid}] ✓ Watch screen re-entered. Main job can resume.")
+
+
+# ── Add Campaign On A Running Emulator (reuses existing driver) ────────
+
+def add_campaign_on_running_emulator(udid, driver, pause_event, pending_links, view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
+    """
+    Called from the campaign-during-script thread for ONE emulator.
+
+    Steps:
+      1. Set pause_event  → watch_video loop sees it and idles.
+      2. Wait briefly for the loop to reach its idle state.
+      3. Run all campaign UI steps on the EXISTING driver (no new connection).
+      4. Clear pause_event → watch_video resumes automatically.
+    """
+    logger.log(f"[{udid}] ⏸ Signalling pause for campaign setup...")
+    pause_event.set()
+
+    # Give the watch loop time to finish its current step and idle
+    time.sleep(3)
+
+    try:
+        logger.log(f"[{udid}] → Starting campaign setup on existing driver...")
+        _do_add_campaign_on_driver(
+            driver, udid, pending_links,
+            view_quantity, watch_seconds, random_behavior,
+            min_startime, max_startime, min_watchtime, max_watchtime
+        )
+        logger.log(f"[{udid}] ✓ Campaign setup complete.")
+    except Exception as e:
+        logger.log(f"[{udid}] ✗ Campaign-during-script error: {e}")
+    finally:
+        # Always unpause so the main job is never left stuck
+        pause_event.clear()
+        logger.log(f"[{udid}] ▶ Pause cleared — main job resuming on {udid}.")
+
+
+# ── During-Script Campaign Runner ─────────────────────────────────────
+
+def run_add_campaign_during_script(
+    current_threads, current_drivers, current_pause_events,
+    view_quantity, watch_seconds, random_behavior,
+    min_startime, max_startime, min_watchtime, max_watchtime
+):
+    """
+    Add campaigns to all running emulators one by one, in emulator-ID order,
+    while the main script keeps running uninterrupted on the others.
+
+    Flow per emulator:
+      - pause watch_video on that emulator
+      - add all available campaign slots (up to MAX_CAMPAIGNS_PER_EMULATOR)
+        using the already-connected driver
+      - resume watch_video
+      - move to next emulator
+    """
+    load_dotenv()
+
+    # ── get running emulators in sorted order ──
+    running_udids = sorted([
+        udid for udid, t in current_threads.items() if t.is_alive()
+    ])
+
+    if not running_udids:
+        logger.log("✗ No running emulators found.")
+        return False, "✗ No running emulators found."
+
+    logger.log(f"→ Campaign-during-script: processing {len(running_udids)} emulator(s) "
+               f"in order: {running_udids}")
+
+    # ── read pending links once up front ──
+    pending = read_campaign_links()
+    if not pending:
+        return False, "✗ No pending links found in campaign_link.txt."
+
+    # ── check available slots per emulator using existing drivers ──
+    logger.log("→ Checking available campaign slots on each emulator...")
+    available_slots_map = {}
+
+    for udid in running_udids:
+        driver = current_drivers.get(udid)
+        if driver is None:
+            logger.log(f"[{udid}] ⚠ No driver found — skipping slot check.")
+            available_slots_map[udid] = 0
+            continue
+
+        pause_event = current_pause_events.get(udid)
+
+        # Temporarily pause to safely navigate to My Campaign for slot check
+        logger.log(f"[{udid}] ⏸ Pausing to check slots...")
+        if pause_event:
+            pause_event.set()
+        time.sleep(3)
+
+        try:
+            pkg = os.getenv("APP_PACKAGE")
+            wait_tmp = WebDriverWait(driver, 20)
+
+            driver.activate_app(pkg)
+            time.sleep(3)
+
+            my_campaign = wait_tmp.until(EC.element_to_be_clickable(
+                (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
+            ))
+            my_campaign.click()
+            time.sleep(2)
+
+            occupied  = count_occupied_slots(driver, udid)
+            available = MAX_CAMPAIGNS_PER_EMULATOR - occupied
+            available_slots_map[udid] = available
+
+            if available == 0:
+                logger.log(f"[{udid}] ✗ All slots full — will be skipped.")
+            else:
+                logger.log(f"[{udid}] ✓ {available} slot(s) available.")
+
+            # Navigate back to main screen after checking
+            try:
+                wait_tmp.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
+                )).click()
+                logger.log(f"[{udid}] ✓ Navigated back after slot check.")
+            except Exception as back_err:
+                logger.log(f"[{udid}] ⚠ Could not click back after slot check: {back_err}")
+
+            # Re-enter watch screen so resume works cleanly
+            try:
+                re_wait = WebDriverWait(driver, 20)
+                watch_btn = re_wait.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
+                ))
+                watch_btn.click()
+                logger.log(f"[{udid}] ✓ Watch screen re-entered after slot check.")
+            except Exception as re_err:
+                logger.log(f"[{udid}] ⚠ Could not re-enter watch screen after check: {re_err}")
+
+        except Exception as e:
+            logger.log(f"[{udid}] ⚠ Could not check slots: {e} — skipping.")
+            available_slots_map[udid] = 0
+        finally:
+            if pause_event:
+                pause_event.clear()
+                logger.log(f"[{udid}] ▶ Resumed after slot check.")
+
+    total_available = sum(available_slots_map.values())
+    if total_available == 0:
+        logger.log("✗ All emulators are full. No slots available.")
+        return False, "✗ All emulators are full. No slots available."
+
+    logger.log(f"→ Total available slots: {total_available}")
+    if len(pending) > total_available:
+        logger.log(f"⚠ {len(pending)} pending links but only {total_available} slot(s) free. "
+                   f"Extra links will be ignored.")
+
+    # ── distribute links across emulators ──
+    distribution = distribute_links(pending, available_slots_map)
+
+    if not distribution:
+        logger.log("✗ No links to distribute.")
+        return False, "✗ No links to distribute."
+
+    # ── process each emulator one by one ──
+    for i, (udid, assigned_links) in enumerate(distribution.items()):
+        driver      = current_drivers.get(udid)
+        pause_event = current_pause_events.get(udid)
+
+        if driver is None:
+            logger.log(f"[{udid}] ⚠ Driver not available — skipping.")
+            continue
+
+        logger.log(f"→ [{i + 1}/{len(distribution)}] Adding campaign to {udid} "
+                   f"({len(assigned_links)} link(s)) | others keep running...")
+
+        add_campaign_on_running_emulator(
+            udid, driver, pause_event, assigned_links,
+            view_quantity, watch_seconds, random_behavior,
+            min_startime, max_startime, min_watchtime, max_watchtime
+        )
+
+        logger.log(f"✓ [{i + 1}/{len(distribution)}] Done with {udid}.")
+
+    logger.log("✓ Campaign-during-script completed for all emulators.")
+    return True, "✓ Campaign-during-script completed for all emulators."
+
+
+# ── Main Campaign Runner (original standalone flow) ───────────────────
 
 def run_add_campaign(view_quantity, watch_seconds, random_behavior, min_startime, max_startime, min_watchtime, max_watchtime):
     load_dotenv()

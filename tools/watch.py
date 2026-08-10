@@ -7,7 +7,7 @@ import logger
 import tools.yt_links_get as yt_links_get
 
 
-def watch_video(driver, udid, stop_event):
+def watch_video(driver, udid, stop_event, pause_event=None):
     wait = WebDriverWait(driver, 15)
     consecutive_skips  = 0
     consecutive_errors = 0
@@ -179,6 +179,15 @@ def watch_video(driver, udid, stop_event):
     # ── Main Loop ─────────────────────────────────────────────────────
 
     while not stop_event.is_set():
+        # ── Pause check: campaign is being added to this emulator ─────
+        if pause_event and pause_event.is_set():
+            logger.log(f"[{udid}] ⏸ Paused for campaign setup — waiting...")
+            while pause_event.is_set() and not stop_event.is_set():
+                time.sleep(1)
+            if stop_event.is_set():
+                break
+            logger.log(f"[{udid}] ▶ Resumed main script after campaign setup.")
+
         try:
             time_element = wait.until(EC.presence_of_element_located(
                 (AppiumBy.ID, "com.view.ytrabbit:id/textView_time")
