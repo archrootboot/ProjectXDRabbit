@@ -176,18 +176,24 @@ def watch_video(driver, udid, stop_event, pause_event=None):
         return "done"
 
 
+    # ── Pause Gate ────────────────────────────────────────────────────
+    # Called only at safe idle points (after point_check, after a skip).
+    # Never interrupts a video in progress.
+
+    def pause_gate():
+        """Block here if a campaign setup is waiting. Safe to call only
+        between videos — never while a video is counting down."""
+        if pause_event and pause_event.is_set():
+            logger.log(f"[{udid}] ⏸ Paused for campaign setup — waiting for it to finish...")
+            while pause_event.is_set() and not stop_event.is_set():
+                time.sleep(1)
+            if not stop_event.is_set():
+                logger.log(f"[{udid}] ▶ Resumed main script after campaign setup.")
+
+
     # ── Main Loop ─────────────────────────────────────────────────────
 
     while not stop_event.is_set():
-        # ── Pause check: campaign is being added to this emulator ─────
-        if pause_event and pause_event.is_set():
-            logger.log(f"[{udid}] ⏸ Paused for campaign setup — waiting...")
-            while pause_event.is_set() and not stop_event.is_set():
-                time.sleep(1)
-            if stop_event.is_set():
-                break
-            logger.log(f"[{udid}] ▶ Resumed main script after campaign setup.")
-
         try:
             time_element = wait.until(EC.presence_of_element_located(
                 (AppiumBy.ID, "com.view.ytrabbit:id/textView_time")
@@ -225,6 +231,8 @@ def watch_video(driver, udid, stop_event, pause_event=None):
                     ))
                     skip_button.click()
                     time.sleep(2)
+                    # ── safe idle point: between videos ──
+                    pause_gate()
                     continue
                 # ─────────────────────────────────────────────────────
                 # yt_result == "play" or "unknown" → wait for video end
@@ -236,6 +244,8 @@ def watch_video(driver, udid, stop_event, pause_event=None):
                     logger.log(f"[{udid}] ✓ Tapped back.")
                     point_check(old_point_value)
                     consecutive_errors = 0
+                    # ── safe idle point: video done, points recorded ──
+                    pause_gate()
 
                 elif result == "stopped":
                     break
@@ -261,6 +271,8 @@ def watch_video(driver, udid, stop_event, pause_event=None):
                 ))
                 skip_button.click()
                 time.sleep(2)
+                # ── safe idle point: duration skipped, between videos ──
+                pause_gate()
 
         except Exception as e:
             consecutive_errors += 1

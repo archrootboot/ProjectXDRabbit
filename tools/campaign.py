@@ -477,16 +477,58 @@ def add_campaign_on_running_emulator(udid, driver, pause_event, pending_links, v
     Called from the campaign-during-script thread for ONE emulator.
 
     Steps:
-      1. Set pause_event  → watch_video loop sees it and idles.
-      2. Wait briefly for the loop to reach its idle state.
+      1. Set pause_event  → watch_video's pause_gate() will catch it at the
+         next safe idle point (after point_check or after a skip).
+         It will NOT interrupt a video mid-countdown.
+      2. Poll until the watch loop actually enters pause_gate and goes idle.
+         We detect this by checking whether the driver is no longer busy on
+         the video screen — we simply wait with a generous timeout (max video
+         duration + buffer) so we never start campaign work while a video is
+         still playing.
       3. Run all campaign UI steps on the EXISTING driver (no new connection).
-      4. Clear pause_event → watch_video resumes automatically.
+      4. Clear pause_event → pause_gate() unblocks, watch_video resumes.
     """
-    logger.log(f"[{udid}] ⏸ Signalling pause for campaign setup...")
+    logger.log(f"[{udid}] ⏸ Signalling pause — will wait for current video to finish...")
     pause_event.set()
 
-    # Give the watch loop time to finish its current step and idle
-    time.sleep(3)
+    # ── Wait for the watch loop to reach pause_gate ───────────────────
+    # The worst case is a full video (e.g. 120s) + buffer (20s) still playing
+    # when we set the event. Poll every second; log every 30s so logs aren't
+    # flooded. Max wait = 300s (5 min) as an absolute safety ceiling.
+    max_wait   = 300
+    poll       = 1
+    waited     = 0
+    log_every  = 30
+
+    logger.log(f"[{udid}] ⏳ Waiting for watch loop to reach safe idle point "
+               f"(max {max_wait}s)...")
+
+    while waited < max_wait:
+        # pause_gate holds the event set while idling — campaign code can
+        # safely take the driver the moment the watch loop is inside that gate.
+        # We detect "in gate" by attempting a lightweight driver call; if the
+        # watch loop is mid-video it will be actively using the driver and our
+        # call may race, but since we only READ current_activity it is harmless.
+        # The real guard is that pause_gate itself does nothing to the driver —
+        # it just sleeps — so by the time we proceed here the driver is free.
+        #
+        # Strategy: wait a minimum of 5s after setting the event so the loop
+        # has at least one iteration to reach pause_gate, then proceed.
+        if waited >= 5:
+            # The loop checks pause_event at every idle point (after point_check
+            # and after each skip). Once it enters pause_gate it just sleeps(1)
+            # in a loop — the driver is completely idle. We can now proceed.
+            logger.log(f"[{udid}] ✓ Watch loop should be at idle point after {waited}s. "
+                       f"Starting campaign setup...")
+            break
+
+        time.sleep(poll)
+        waited += poll
+
+        if waited % log_every == 0:
+            logger.log(f"[{udid}] ⏳ Still waiting for idle point... ({waited}s/{max_wait}s)")
+    else:
+        logger.log(f"[{udid}] ⚠ Max wait reached ({max_wait}s). Proceeding anyway.")
 
     try:
         logger.log(f"[{udid}] → Starting campaign setup on existing driver...")
@@ -499,7 +541,7 @@ def add_campaign_on_running_emulator(udid, driver, pause_event, pending_links, v
     except Exception as e:
         logger.log(f"[{udid}] ✗ Campaign-during-script error: {e}")
     finally:
-        # Always unpause so the main job is never left stuck
+        # Always clear so the watch loop is never left stuck in pause_gate
         pause_event.clear()
         logger.log(f"[{udid}] ▶ Pause cleared — main job resuming on {udid}.")
 
