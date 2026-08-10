@@ -392,11 +392,12 @@ def _do_add_campaign_on_driver(driver, udid, pending_links, view_quantity, watch
         driver.activate_app(pkg)
         time.sleep(5)
 
-        #Back to main screen
-        logger.log(f"[{udid}] → Back to main screen...")
+        # ── go to main screen first ──
+        logger.log(f"[{udid}] → Clicking Back to main screen...")
         wait.until(EC.element_to_be_clickable(
             (AppiumBy.ID, "com.view.ytrabbit:id/btn_backs")
         )).click()
+        logger.log(f"[{udid}] ✓ Main screen reached.")
         time.sleep(2)
 
         # ── click My Campaign ──
@@ -528,6 +529,14 @@ def add_campaign_on_running_emulator(udid, driver, pause_event, paused_ack,
         logger.log(f"[{udid}] → Navigating to My Campaign for slot check...")
         driver.activate_app(pkg)
         time.sleep(3)
+
+        # ── go to main screen first ──
+        logger.log(f"[{udid}] → Clicking Back to main screen...")
+        wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backs")
+        )).click()
+        logger.log(f"[{udid}] ✓ Main screen reached.")
+        time.sleep(2)
 
         wait.until(EC.element_to_be_clickable(
             (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
