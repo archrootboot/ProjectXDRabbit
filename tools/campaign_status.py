@@ -391,6 +391,107 @@ def delete_completed_for_emulator(udid, system_port, webdriver_url):
                 pass
 
 
+# ── Delete Completed On Existing Driver (during-script flow) ──────────
+
+def delete_completed_on_driver(driver, udid):
+    """
+    Delete all completed campaign slots using an already-connected driver.
+    The caller is responsible for ensuring the driver is idle (paused)
+    and that the app is open before calling this.
+
+    Navigation: btn_backs (main screen) → textView7 (My Campaign)
+    → delete completed slots.
+
+    Stays on the My Campaign screen after deletion so the caller can
+    proceed directly to slot check and adding without re-navigating.
+
+    Returns the number of slots deleted.
+    """
+    wait = WebDriverWait(driver, 20)
+
+    # ── go to main screen first ──
+    logger.log(f"[{udid}] → Clicking Back to main screen...")
+    try:
+        wait.until(EC.element_to_be_clickable(
+            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backs")
+        )).click()
+        logger.log(f"[{udid}] ✓ Main screen reached.")
+        time.sleep(2)
+    except Exception as e:
+        logger.log(f"[{udid}] ⚠ Could not click btn_backs: {e}")
+
+    # ── navigate to My Campaign ──
+    logger.log(f"[{udid}] → Opening My Campaign for delete check...")
+    wait.until(EC.element_to_be_clickable(
+        (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
+    )).click()
+    time.sleep(2)
+
+    deleted = 0
+
+    # ── probe all slots, re-checking after each delete ──
+    # After deleting a slot the list shifts up, so always re-probe
+    # from slot [1] until no more completed slots are found.
+    for _pass in range(MAX_CAMPAIGNS):
+        found_completed = False
+
+        for index in range(1, MAX_CAMPAIGNS + 1):
+            done_xpath = (
+                f'(//android.widget.TextView'
+                f'[@resource-id="com.view.ytrabbit:id/textView_done"])[{index}]'
+            )
+            time_xpath = (
+                f'(//android.widget.TextView'
+                f'[@resource-id="com.view.ytrabbit:id/textView_time"])[{index}]'
+            )
+
+            try:
+                done_el   = driver.find_element(AppiumBy.XPATH, done_xpath)
+                done_text = done_el.text.strip()
+            except Exception:
+                break  # slot doesn't exist → stop probing
+
+            complete_time = ""
+            if "complete:" in done_text:
+                complete_time = done_text.split("complete:", 1)[1].strip()
+
+            if not complete_time:
+                logger.log(f"[{udid}] → Slot [{index}] in-progress — skipping.")
+                continue
+
+            # Completed → click textView_time to trigger delete dialog
+            try:
+                time_el = wait.until(EC.element_to_be_clickable(
+                    (AppiumBy.XPATH, time_xpath)
+                ))
+                time_el.click()
+
+                wait.until(EC.element_to_be_clickable(
+                    (AppiumBy.ID, "android:id/button1")
+                )).click()
+                logger.log(f"[{udid}] ✓ Slot [{index}] deleted "
+                           f"(completed at {complete_time}).")
+
+                deleted += 1
+                found_completed = True
+                time.sleep(1)
+                break  # restart pass from slot [1] after list shifts
+
+            except Exception as click_err:
+                logger.log(f"[{udid}] ⚠ Could not delete slot [{index}]: {click_err}")
+
+        if not found_completed:
+            break  # no more completed slots in this pass
+
+    if deleted == 0:
+        logger.log(f"[{udid}] → No completed campaigns to delete.")
+    else:
+        logger.log(f"[{udid}] ✓ Deleted {deleted} completed campaign(s).")
+
+    # stays on My Campaign screen — caller proceeds directly to slot check
+    return deleted
+
+
 # ── Main Entry For Delete ─────────────────────────────────────────────
 
 def run_delete_completed():

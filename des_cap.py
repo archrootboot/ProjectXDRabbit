@@ -27,7 +27,6 @@ def build_options(udid, system_port):
     return options
 
 
-
 def get_click_timeout(num_emulators):
     """Scale the WebDriverWait timeout based on how many emulators are running."""
     base = 30
@@ -35,7 +34,7 @@ def get_click_timeout(num_emulators):
     return base + max(0, num_emulators - 1) * per_extra
 
 
-def run_emulator(udid, system_port, stop_event, drivers):
+def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events):
     driver = None
     try:
         driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
@@ -65,7 +64,7 @@ def run_emulator(udid, system_port, stop_event, drivers):
 
         # ── click element after app opens with retry ──
         logger.log(f"→ wait 10s before click element on {udid}...")
-        time.sleep(10) 
+        time.sleep(10)
         for attempt in range(5):
             try:
                 element = wait.until(EC.element_to_be_clickable(
@@ -80,7 +79,11 @@ def run_emulator(udid, system_port, stop_event, drivers):
         else:
             raise Exception(f"[{udid}] Failed to click element after 5 attempts")
 
-        watch.watch_video(driver, udid, stop_event)
+        watch.watch_video(
+            driver, udid, stop_event,
+            pause_events.get(udid),
+            paused_ack_events.get(udid)
+        )
 
     except Exception as e:
         logger.log(f"✗ Error with {udid}: {e}")
@@ -154,16 +157,19 @@ def get_status(threads):
 
 # ── Add New Emulators ─────────────────────────────────────────────────
 
-def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
+def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
+                      existing_pause_events, existing_paused_ack_events):
     emulators = grabber.get_emulator_list()
 
     if not emulators:
         logger.log("✗ No emulators found via ADB.")
-        return {}, {}, {}
+        return {}, {}, {}, {}, {}
 
-    new_stop_events = {}
-    new_threads = {}
-    new_drivers = {}
+    new_stop_events       = {}
+    new_threads           = {}
+    new_drivers           = {}
+    new_pause_events      = {}
+    new_paused_ack_events = {}
 
     for i, (udid, sys_port) in enumerate(emulators):
         if udid in existing_threads and existing_threads[udid].is_alive():
@@ -171,12 +177,20 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
             continue
 
         logger.log(f"→ New emulator detected: {udid}")
-        stop_event = threading.Event()
-        new_stop_events[udid] = stop_event
+        stop_event       = threading.Event()
+        pause_event      = threading.Event()
+        paused_ack_event = threading.Event()
+        new_stop_events[udid]       = stop_event
+        new_pause_events[udid]      = pause_event
+        new_paused_ack_events[udid] = paused_ack_event
+
+        merged_pause_events      = {**existing_pause_events,      **new_pause_events}
+        merged_paused_ack_events = {**existing_paused_ack_events, **new_paused_ack_events}
 
         thread = threading.Thread(
             target=run_emulator,
-            args=(udid, sys_port, stop_event, existing_drivers)
+            args=(udid, sys_port, stop_event, existing_drivers,
+                  merged_pause_events, merged_paused_ack_events)
         )
         new_threads[udid] = thread
         thread.start()
@@ -186,7 +200,7 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers):
             logger.log(f"→ Waiting 10s before next thread...")
             time.sleep(10)
 
-    return new_threads, new_stop_events, new_drivers
+    return new_threads, new_stop_events, new_drivers, new_pause_events, new_paused_ack_events
 
 
 # ── Main ──────────────────────────────────────────────────────────────
@@ -198,25 +212,31 @@ def main_pro():
 
     if not webdriver_url:
         logger.log("✗ WEBDRIVER_URL not set in .env file.")
-        return {}, {}, {}
+        return {}, {}, {}, {}
 
     emulators = grabber.get_emulator_list()
 
     if not emulators:
         logger.log("✗ No emulators found. Aborting.")
-        return {}, {}, {}
+        return {}, {}, {}, {}
 
-    stop_events = {}
-    threads = {}
-    drivers = {}
+    stop_events       = {}
+    threads           = {}
+    drivers           = {}
+    pause_events      = {}
+    paused_ack_events = {}
+
+    # ── create all events first so threads share the same dict references ──
+    for udid, _ in emulators:
+        stop_events[udid]       = threading.Event()
+        pause_events[udid]      = threading.Event()
+        paused_ack_events[udid] = threading.Event()
 
     for i, (udid, sys_port) in enumerate(emulators):
-        stop_event = threading.Event()
-        stop_events[udid] = stop_event
-
         thread = threading.Thread(
             target=run_emulator,
-            args=(udid, sys_port, stop_event, drivers)
+            args=(udid, sys_port, stop_events[udid], drivers,
+                  pause_events, paused_ack_events)
         )
         threads[udid] = thread
         thread.start()
@@ -226,7 +246,7 @@ def main_pro():
             logger.log(f"→ Waiting 10s before next thread...")
             time.sleep(10)
 
-    return threads, stop_events, drivers
+    return threads, stop_events, drivers, pause_events, paused_ack_events
 
 
 if __name__ == "__main__":
