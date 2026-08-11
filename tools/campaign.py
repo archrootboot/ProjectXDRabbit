@@ -509,7 +509,7 @@ def add_campaign_on_running_emulator(udid, driver, pause_event, paused_ack,
     pause_event.set()
 
     # ── Wait for confirmed idle signal from pause_gate ────────────────
-    max_wait = 300
+    max_wait = int(os.getenv("CAMPAIGN_PAUSE_TIMEOUT", "300"))
     logger.log(f"[{udid}] ⏳ Waiting for watch loop to confirm idle (max {max_wait}s)...")
 
     if paused_ack:

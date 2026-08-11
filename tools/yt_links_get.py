@@ -47,8 +47,8 @@ SKIP_THUMBS_DIR  = "skip_thumbs"  # folder with reference thumbnails
 # aHash catches overall brightness/color structure  → robust to overlays
 # wHash catches wavelet frequency patterns          → robust to resizing
 # Both must be within threshold to count as a match (reduces false positives)
-AHASH_THRESHOLD  =  int(os.getenv("AHASH_THRESHOLD", 6))         # aHash Hamming distance ≤ this = match
-WHASH_THRESHOLD  =  int(os.getenv("WHASH_THRESHOLD", 10))        # wHash Hamming distance ≤ this = match
+AHASH_THRESHOLD  =  int(os.getenv("AHASH_THRESHOLD", 8))         # aHash Hamming distance ≤ this = match
+WHASH_THRESHOLD  =  int(os.getenv("WHASH_THRESHOLD", 12))        # wHash Hamming distance ≤ this = match
 
 
 # ── Build Skip Hashes ─────────────────────────────────────────────────
