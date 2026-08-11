@@ -6,6 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 import threading
 import tools.grabber as grabber
+import tools.campaign_status as campaign_status
 import logger
 import os
 from dotenv import load_dotenv
@@ -525,26 +526,21 @@ def add_campaign_on_running_emulator(udid, driver, pause_event, paused_ack,
         pkg  = os.getenv("APP_PACKAGE")
         wait = WebDriverWait(driver, 30)
 
-        # ── navigate to My Campaign to check actual available slots ──
-        logger.log(f"[{udid}] → Navigating to My Campaign for slot check...")
+        logger.log(f"[{udid}] → Activating app...")
         driver.activate_app(pkg)
         time.sleep(3)
 
-        # ── go to main screen first ──
-        logger.log(f"[{udid}] → Clicking Back to main screen...")
-        wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backs")
-        )).click()
-        logger.log(f"[{udid}] ✓ Main screen reached.")
-        time.sleep(2)
+        # ── step 1: delete completed campaigns first to free up slots ──
+        # navigates: btn_backs → main screen → textView7 → My Campaign
+        # stays on My Campaign screen after deletion
+        logger.log(f"[{udid}] → Checking and deleting completed campaigns...")
+        deleted = campaign_status.delete_completed_on_driver(driver, udid)
+        if deleted > 0:
+            logger.log(f"[{udid}] ✓ Freed {deleted} slot(s) by deleting completed campaigns.")
+        else:
+            logger.log(f"[{udid}] → No completed campaigns found to delete.")
 
-        wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
-        )).click()
-        logger.log(f"[{udid}] ✓ My Campaign opened.")
-        time.sleep(2)
-
-        # ── live slot check ──
+        # ── step 2: live slot check (already on My Campaign screen) ──
         occupied  = count_occupied_slots(driver, udid)
         available = MAX_CAMPAIGNS_PER_EMULATOR - occupied
 
