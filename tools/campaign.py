@@ -635,56 +635,47 @@ def run_add_campaign_during_script(
     if not pending:
         return False, "✗ No pending links found in campaign_link.txt."
 
-    # ── assume worst case: every emulator could have up to MAX slots free.
-    #    The real slot count is checked live inside add_campaign_on_running_emulator
-    #    AFTER the pause is confirmed and the driver is safely idle — that is
-    #    the only correct time to navigate the app for a slot count.
-    #    Here we just assign MAX_CAMPAIGNS_PER_EMULATOR links per emulator so
-    #    distribute_links() hands out candidates; the live check will trim extras.
-    available_slots_map = {}
+    # ── build emulator list, skipping any without a driver ──
+    valid_udids = []
     for udid in running_udids:
-        driver = current_drivers.get(udid)
-        if driver is None:
+        if current_drivers.get(udid) is None:
             logger.log(f"[{udid}] ⚠ No driver found — will be skipped.")
-            available_slots_map[udid] = 0
         else:
-            available_slots_map[udid] = MAX_CAMPAIGNS_PER_EMULATOR
+            valid_udids.append(udid)
 
-    total_available = sum(available_slots_map.values())
-    if total_available == 0:
+    if not valid_udids:
         logger.log("✗ No drivers available.")
         return False, "✗ No drivers available."
 
-    logger.log(f"→ Distributing up to {MAX_CAMPAIGNS_PER_EMULATOR} link(s) per emulator "
-               f"across {len(running_udids)} emulator(s). Actual slot count checked live per emulator.")
-
-    # ── distribute pending links across emulators ──
-    distribution = distribute_links(pending, available_slots_map)
-
-    if not distribution:
-        logger.log("✗ No links to distribute.")
-        return False, "✗ No links to distribute."
+    logger.log(f"→ {len(pending)} pending link(s) will be offered to each emulator. "
+               f"Actual available slots checked live on each emulator after it pauses.")
 
     # ── process each emulator one by one ──
-    for i, (udid, assigned_links) in enumerate(distribution.items()):
+    # Every emulator receives the full pending list — the live slot check
+    # inside add_campaign_on_running_emulator trims it to what actually fits.
+    for i, udid in enumerate(valid_udids):
         driver      = current_drivers.get(udid)
         pause_event = current_pause_events.get(udid)
+        paused_ack  = current_paused_ack_events.get(udid)
 
-        if driver is None:
-            logger.log(f"[{udid}] ⚠ Driver not available — skipping.")
-            continue
+        logger.log(f"→ [{i + 1}/{len(valid_udids)}] Processing {udid} "
+                   f"| others keep running...")
 
-        logger.log(f"→ [{i + 1}/{len(distribution)}] Adding campaign to {udid} "
-                   f"(up to {len(assigned_links)} link(s)) | others keep running...")
-
-        paused_ack = current_paused_ack_events.get(udid)
         add_campaign_on_running_emulator(
-            udid, driver, pause_event, paused_ack, assigned_links,
+            udid, driver, pause_event, paused_ack, pending,
             view_quantity, watch_seconds, random_behavior,
             min_startime, max_startime, min_watchtime, max_watchtime
         )
 
-        logger.log(f"✓ [{i + 1}/{len(distribution)}] Done with {udid}.")
+        # Re-read pending after each emulator so newly marked-done links
+        # are excluded for the next emulator.
+        pending = read_campaign_links()
+        if not pending:
+            logger.log("→ No more pending links — stopping early.")
+            break
+
+        logger.log(f"✓ [{i + 1}/{len(valid_udids)}] Done with {udid}. "
+                   f"{len(pending)} pending link(s) remaining.")
 
     logger.log("✓ Campaign-during-script completed for all emulators.")
     return True, "✓ Campaign-during-script completed for all emulators."
