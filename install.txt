@@ -10,5 +10,8 @@ set ANDROID_HOME=C:\Android
 setx PATH "%PATH%;C:\Android\platform-tools" /M
 set PATH=%PATH%;C:\Android\platform-tools
 
+mkdir "skip_thumbs"
+type nul > skipvideo_link.txt
+type nul > campaign_link.txt
 
 pip install -r requirements.txt
