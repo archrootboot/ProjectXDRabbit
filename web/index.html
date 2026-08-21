@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XDRabbit Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Tokens ───────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0c12;
+      --surface:   #111420;
+      --card:      #161927;
+      --border:    rgba(255,255,255,0.07);
+      --accent:    #7c3aed;
+      --accent2:   #a855f7;
+      --glow:      rgba(124,58,237,0.35);
+      --green:     #22d3a5;
+      --red:       #f87171;
+      --yellow:    #fbbf24;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --radius:    12px;
+      --radius-sm: 7px;
+      --font:      'Inter', sans-serif;
+      --mono:      'JetBrains Mono', monospace;
+      --trans:     0.18s ease;
+    }
+
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Scrollbar ───────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    /* ── Header ──────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      height: 60px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .logo .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--accent2);
+      box-shadow: 0 0 10px var(--accent2);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 6px var(--accent2); }
+      50%      { box-shadow: 0 0 18px var(--accent2); }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* ── Layout ──────────────────────────────────────────────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 0;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────── */
+    .sidebar {
+      grid-row: 1 / 3;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+      padding-bottom: 24px;
+    }
+
+    .sidebar-section {
+      padding: 20px 18px 8px;
+    }
+    .sidebar-label {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+      padding-left: 4px;
+    }
+
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: var(--font);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--trans);
+      white-space: nowrap;
+      user-select: none;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent2);
+      box-shadow: 0 0 16px var(--glow);
+    }
+
+    .btn-danger {
+      background: rgba(248,113,113,0.12);
+      color: var(--red);
+      border: 1px solid rgba(248,113,113,0.25);
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: rgba(248,113,113,0.22);
+    }
+
+    .btn-ghost {
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: rgba(255,255,255,0.09);
+    }
+
+    .btn-green {
+      background: rgba(34,211,165,0.12);
+      color: var(--green);
+      border: 1px solid rgba(34,211,165,0.25);
+    }
+    .btn-green:hover:not(:disabled) {
+      background: rgba(34,211,165,0.22);
+    }
+
+    .btn-sm { padding: 5px 10px; font-size: 0.75rem; }
+    .btn-full { width: 100%; }
+
+    /* ── Status Badge ────────────────────────────────────────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 99px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    .badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+    .badge-running  { background: rgba(34,211,165,0.12); color: var(--green); }
+    .badge-running .badge-dot  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .badge-stopped  { background: rgba(100,116,139,0.12); color: var(--muted); }
+    .badge-stopped .badge-dot  { background: var(--muted); }
+
+    /* ── Control buttons in sidebar ──────────────────────────── */
+    .ctrl-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 0.83rem;
+      font-weight: 500;
+      transition: all var(--trans);
+      border: 1px solid transparent;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      color: var(--text);
+      font-family: var(--font);
+    }
+    .ctrl-btn:hover { background: rgba(255,255,255,0.05); border-color: var(--border); }
+    .ctrl-btn .icon { font-size: 1rem; flex-shrink: 0; width: 20px; text-align: center; }
+    .ctrl-btn.danger { color: var(--red); }
+    .ctrl-btn.danger:hover { background: rgba(248,113,113,0.08); border-color: rgba(248,113,113,0.2); }
+    .ctrl-btn.success { color: var(--green); }
+    .ctrl-btn.success:hover { background: rgba(34,211,165,0.08); border-color: rgba(34,211,165,0.2); }
+
+    /* ── Appium Indicator in sidebar ─────────────────────────── */
+    .appium-card {
+      margin: 0 18px 4px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .appium-label { font-size: 0.8rem; color: var(--muted); }
+    .appium-actions { display: flex; gap: 6px; }
+
+    /* ── Emulator grid ───────────────────────────────────────── */
+    #emulator-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0 18px;
+    }
+
+    .emulator-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      animation: slideIn 0.25s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .emulator-id {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--text);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .emulator-card.stopped { opacity: 0.5; }
+
+    .no-emulators {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+      padding: 10px 0;
+    }
+
+    /* ── Main content ────────────────────────────────────────── */
+    .main-area {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Toolbar row ─────────────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .toolbar-spacer { flex: 1; }
+
+    /* ── Log panel ───────────────────────────────────────────── */
+    .log-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 20px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.75;
+      min-height: 0;
+    }
+
+    .log-line {
+      padding: 1px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      animation: fadeIn 0.12s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    .log-line.green { color: var(--green); }
+    .log-line.red   { color: var(--red);   }
+    .log-line.muted { color: var(--muted); }
+
+    /* ── Status bar ──────────────────────────────────────────── */
+    .status-bar {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 20px;
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
+    .status-bar .sse-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+    .status-bar .sse-dot.off { background: var(--muted); box-shadow: none; }
+
+    /* ── Modal ───────────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: min(480px, 95vw);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+      animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: scale(0.95) translateY(-10px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 22px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-title { font-size: 0.95rem; font-weight: 600; }
+    .modal-close {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex; align-items: center; justify-content: center;
+      transition: all var(--trans);
+    }
+    .modal-close:hover { background: rgba(255,255,255,0.07); color: var(--text); }
+
+    .modal-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+    .modal-footer {
+      padding: 12px 22px 18px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Form Controls ───────────────────────────────────────── */
+    .form-row { display: flex; gap: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+    .form-label {
+      font-size: 0.73rem;
+      font-weight: 500;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .form-input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 8px 12px;
+      font-family: var(--font);
+      font-size: 0.84rem;
+      transition: border-color var(--trans);
+      outline: none;
+    }
+    .form-input:focus { border-color: var(--accent); }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .toggle-label { font-size: 0.83rem; color: var(--text); }
+
+    .toggle {
+      position: relative;
+      width: 36px; height: 20px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: rgba(255,255,255,0.1);
+      border-radius: 99px;
+      cursor: pointer;
+      transition: background var(--trans);
+    }
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      height: 14px; width: 14px;
+      left: 3px; top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform var(--trans);
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+
+    .random-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      overflow: hidden;
+      max-height: 0;
+      opacity: 0;
+      transition: max-height 0.3s ease, opacity 0.3s ease;
+    }
+    .random-fields.show { max-height: 200px; opacity: 1; }
+
+    /* ── Toast ───────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 300;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 16px;
+      font-size: 0.8rem;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      animation: toastIn 0.2s ease;
+      max-width: 320px;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .toast-item.ok  { border-left: 3px solid var(--green); }
+    .toast-item.err { border-left: 3px solid var(--red); }
+
+    /* ── Divider in sidebar ──────────────────────────────────── */
+    .sidebar-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 8px 18px;
+    }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 700px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { grid-row: auto; border-right: none; border-bottom: 1px solid var(--border); max-height: 250px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <div class="dot"></div>
+    XDRabbit Dashboard
+  </div>
+  <div class="header-actions">
+    <span id="hdr-emulator-count" style="font-size:0.78rem;color:var(--muted)"></span>
+    <button class="btn btn-ghost btn-sm" onclick="openCampaignModal('standalone')">📋 Campaign</button>
+    <button class="btn btn-ghost btn-sm" onclick="openCampaignModal('during')">⚡ Campaign During</button>
+    <button class="btn btn-ghost btn-sm" onclick="fetchCampaignStatus()">📊 Camp. Status</button>
+  </div>
+</header>
+
+<!-- ── Layout ──────────────────────────────────────────────────────── -->
+<div class="layout">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <!-- Appium -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Appium Server</div>
+      <div class="appium-card">
+        <div>
+          <div class="appium-label">Status</div>
+          <span id="appium-badge" class="badge badge-stopped">
+            <span class="badge-dot"></span> Stopped
+          </span>
+        </div>
+        <div class="appium-actions">
+          <button id="btn-appium-start" class="btn btn-green btn-sm" onclick="appiumAction('start')">▶ Start</button>
+          <button id="btn-appium-stop"  class="btn btn-danger btn-sm" onclick="appiumAction('stop')">■ Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <!-- Script Controls -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Script Control</div>
+    </div>
+
+    <button class="ctrl-btn success" id="btn-run" onclick="runScript()">
+      <span class="icon">▶</span> Run Script
+    </button>
+    <button class="ctrl-btn" onclick="addEmulators()">
+      <span class="icon">➕</span> Add New Emulators
+    </button>
+    <button class="ctrl-btn danger" onclick="stopAll()">
+      <span class="icon">■</span> Stop All
+    </button>
+
+    <div class="sidebar-divider"></div>
+
+    <!-- Emulators -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Emulators</div>
+    </div>
+    <div id="emulator-grid">
+      <div class="no-emulators">No emulators detected</div>
+    </div>
+
+  </aside>
+
+  <!-- ── Main ──────────────────────────────────────────────────────── -->
+  <div class="main-area">
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <span style="font-size:0.78rem;color:var(--muted);font-weight:500;">📋 Live Logs</span>
+      <div class="toolbar-spacer"></div>
+
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--muted);cursor:pointer;">
+        <input type="checkbox" id="chk-autoscroll" checked style="accent-color:var(--accent);" />
+        Auto-scroll
+      </label>
+
+      <button class="btn btn-ghost btn-sm" onclick="clearLog()">🗑 Clear Log</button>
+    </div>
+
+    <!-- Log Panel -->
+    <div class="log-panel" id="log-panel"></div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div class="sse-dot off" id="sse-dot"></div>
+      <span id="sse-status">Connecting...</span>
+      <span style="flex:1"></span>
+      <span id="log-count">0 lines</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Campaign Modal ───────────────────────────────────────────────── -->
+<div class="modal-overlay" id="campaign-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Add Campaign</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="campaign-mode" value="standalone" />
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">View Quantity</label>
+          <input class="form-input" id="c-view-qty" type="number" min="1" placeholder="e.g. 100" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Watch Seconds</label>
+          <input class="form-input" id="c-watch-sec" type="number" min="1" placeholder="e.g. 60" />
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">🎲 Random Behavior</span>
+        <label class="toggle">
+          <input type="checkbox" id="c-random" onchange="toggleRandom(this)" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="random-fields" id="random-fields">
+        <div class="form-group">
+          <label class="form-label">Min Start Time</label>
+          <input class="form-input" id="c-min-start" type="number" placeholder="seconds" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Max Start Time</label>
+          <input class="form-input" id="c-max-start" type="number" placeholder="seconds" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Min Watch Time</label>
+          <input class="form-input" id="c-min-watch" type="number" placeholder="seconds" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Max Watch Time</label>
+          <input class="form-input" id="c-max-watch" type="number" placeholder="seconds" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCampaign()">🚀 Submit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast Container ──────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+  /* ── Config ───────────────────────────────────────────────────────── */
+  const POLL_INTERVAL = 3000;   // ms between /api/status polls
+  let logCount = 0;
+  let lastEmulators = {};
+
+  /* ── SSE ──────────────────────────────────────────────────────────── */
+  const logPanel = document.getElementById('log-panel');
+  const sseDot   = document.getElementById('sse-dot');
+  const sseStatus= document.getElementById('sse-status');
+  const logCountEl = document.getElementById('log-count');
+  const autoScrollChk = document.getElementById('chk-autoscroll');
+
+  function connectSSE() {
+    const es = new EventSource('/stream');
+
+    es.onopen = () => {
+      sseDot.classList.remove('off');
+      sseStatus.textContent = 'Connected — streaming live';
+    };
+
+    es.onmessage = (e) => {
+      const raw = e.data;
+      if (!raw || raw.startsWith(':')) return;
+
+      const line = document.createElement('div');
+      line.className = 'log-line';
+
+      // Detect color tags
+      if (raw.includes('[GREEN]')) {
+        line.className += ' green';
+        line.textContent = raw.replace(/\[GREEN\]|\[RESET\]/g, '').trim();
+      } else if (raw.includes('[RED]')) {
+        line.className += ' red';
+        line.textContent = raw.replace(/\[RED\]|\[RESET\]/g, '').trim();
+      } else {
+        line.textContent = raw;
+      }
+
+      logPanel.appendChild(line);
+      logCount++;
+      logCountEl.textContent = logCount + ' lines';
+
+      if (autoScrollChk.checked) {
+        logPanel.scrollTop = logPanel.scrollHeight;
+      }
+
+      // Keep DOM light — max 1000 lines
+      while (logPanel.children.length > 1000) {
+        logPanel.removeChild(logPanel.firstChild);
+      }
+    };
+
+    es.onerror = () => {
+      sseDot.classList.add('off');
+      sseStatus.textContent = 'Reconnecting...';
+      es.close();
+      setTimeout(connectSSE, 2500);
+    };
+  }
+  connectSSE();
+
+  /* ── Status polling ───────────────────────────────────────────────── */
+  async function pollStatus() {
+    try {
+      const res  = await fetch('/api/status');
+      const data = await res.json();
+      updateAppiumBadge(data.appium);
+      updateEmulatorGrid(data.emulators);
+    } catch (_) {}
+  }
+
+  function updateAppiumBadge(running) {
+    const badge = document.getElementById('appium-badge');
+    if (running) {
+      badge.className = 'badge badge-running';
+      badge.innerHTML = '<span class="badge-dot"></span> Running';
+    } else {
+      badge.className = 'badge badge-stopped';
+      badge.innerHTML = '<span class="badge-dot"></span> Stopped';
+    }
+  }
+
+  function updateEmulatorGrid(emulators) {
+    const grid = document.getElementById('emulator-grid');
+    const keys = Object.keys(emulators);
+    const hdrCount = document.getElementById('hdr-emulator-count');
+
+    const running = keys.filter(k => emulators[k] === 'running');
+    hdrCount.textContent = running.length
+      ? `${running.length} emulator${running.length > 1 ? 's' : ''} running`
+      : '';
+
+    if (keys.length === 0) {
+      grid.innerHTML = '<div class="no-emulators">No emulators detected</div>';
+      return;
+    }
+
+    // Only re-render if changed
+    const sig = JSON.stringify(emulators);
+    if (sig === window._lastEmulatorSig) return;
+    window._lastEmulatorSig = sig;
+
+    grid.innerHTML = '';
+    keys.forEach(udid => {
+      const state = emulators[udid];
+      const card = document.createElement('div');
+      card.className = 'emulator-card' + (state === 'stopped' ? ' stopped' : '');
+      card.innerHTML = `
+        <span class="emulator-id">${udid}</span>
+        <span class="badge ${state === 'running' ? 'badge-running' : 'badge-stopped'}">
+          <span class="badge-dot"></span>${state}
+        </span>
+        <button class="btn btn-danger btn-sm"
+          onclick="stopOne('${udid}')"
+          ${state === 'stopped' ? 'disabled' : ''}>■</button>`;
+      grid.appendChild(card);
+    });
+  }
+
+  setInterval(pollStatus, POLL_INTERVAL);
+  pollStatus();
+
+  /* ── API calls ────────────────────────────────────────────────────── */
+  async function api(path, method='POST', body=null) {
+    try {
+      const opts = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body) opts.body = JSON.stringify(body);
+      const res  = await fetch(path, opts);
+      const data = await res.json();
+      toast(data.msg || (data.ok ? 'Done' : 'Error'), data.ok !== false ? 'ok' : 'err');
+      return data;
+    } catch (e) {
+      toast('Network error', 'err');
+    }
+  }
+
+  function appiumAction(action) { api(`/api/appium/${action}`); }
+  function runScript()          { api('/api/start'); }
+  function stopAll()            { api('/api/stop_all'); }
+  function addEmulators()       { api('/api/add_emulators'); }
+  function stopOne(udid)        { api('/api/stop_one', 'POST', { udid }); }
+  function fetchCampaignStatus(){ api('/api/campaign_status', 'GET', null); }
+
+  async function clearLog() {
+    await api('/api/clear_log');
+    logPanel.innerHTML = '';
+    logCount = 0;
+    logCountEl.textContent = '0 lines';
+  }
+
+  /* ── Campaign Modal ───────────────────────────────────────────────── */
+  function openCampaignModal(mode) {
+    document.getElementById('campaign-mode').value = mode;
+    document.getElementById('modal-title').textContent =
+      mode === 'during' ? '⚡ Add Campaign During Script' : '📋 Add Campaign';
+    document.getElementById('c-random').checked = false;
+    document.getElementById('random-fields').classList.remove('show');
+    document.getElementById('campaign-modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('campaign-modal').classList.remove('open');
+  }
+
+  function toggleRandom(el) {
+    document.getElementById('random-fields').classList.toggle('show', el.checked);
+  }
+
+  async function submitCampaign() {
+    const mode   = document.getElementById('campaign-mode').value;
+    const viewQty = document.getElementById('c-view-qty').value.trim();
+    const watchSec= document.getElementById('c-watch-sec').value.trim();
+    const random  = document.getElementById('c-random').checked;
+
+    if (!viewQty || !watchSec) {
+      toast('Fill in View Quantity and Watch Seconds', 'err');
+      return;
+    }
+
+    const body = {
+      mode,
+      view_quantity:   viewQty,
+      watch_seconds:   watchSec,
+      random_behavior: random,
+    };
+
+    if (random) {
+      body.min_startime  = document.getElementById('c-min-start').value.trim();
+      body.max_startime  = document.getElementById('c-max-start').value.trim();
+      body.min_watchtime = document.getElementById('c-min-watch').value.trim();
+      body.max_watchtime = document.getElementById('c-max-watch').value.trim();
+    }
+
+    closeModal();
+    await api('/api/campaign', 'POST', body);
+  }
+
+  // Close modal on overlay click
+  document.getElementById('campaign-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  /* ── Toast ─────────────────────────────────────────────────────────── */
+  function toast(msg, type='ok') {
+    const container = document.getElementById('toast');
+    const el = document.createElement('div');
+    el.className = `toast-item ${type}`;
+    el.textContent = (type === 'ok' ? '✓ ' : '✗ ') + msg;
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  /* ── Keyboard shortcuts ────────────────────────────────────────────── */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+  });
+</script>
+</body>
+</html>
