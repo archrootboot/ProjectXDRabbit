@@ -31,7 +31,7 @@ def show_logs():
     while not os.path.exists(LOG_FILE):
         time.sleep(0.5)
 
-    with open(LOG_FILE, "r", encoding="utf-8") as f:
+    with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
         if content:
             for line in content.splitlines():
