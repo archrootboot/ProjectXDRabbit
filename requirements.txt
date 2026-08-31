@@ -3,3 +3,4 @@ python-dotenv==1.2.2
 colorama
 Pillow
 imagehash
+flask

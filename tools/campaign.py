@@ -5,6 +5,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import threading
+
+# ── File-level lock — prevents concurrent read-modify-write on campaign_link.txt ──
+_campaign_file_lock = threading.Lock()
 import tools.grabber as grabber
 import tools.campaign_status as campaign_status
 import logger
@@ -59,23 +62,28 @@ def read_campaign_links():
 def mark_link_done(line_index):
     """
     Rewrite line at line_index (0-based) in campaign_link.txt by
-    appending ' done' to it.  Thread-safe via a per-call file read+write.
+    appending ' done' to it.
+
+    Thread-safe: the entire read → modify → write cycle is protected by
+    _campaign_file_lock so two emulator threads can never interleave their
+    writes and silently overwrite each other.
     """
-    try:
-        with open(CAMPAIGN_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+    with _campaign_file_lock:
+        try:
+            with open(CAMPAIGN_FILE, "r", encoding="utf-8") as f:
+                lines = f.readlines()
 
-        original = lines[line_index].rstrip("\n").rstrip("\r")
-        # Guard against double-marking
-        if not original.lower().endswith(" done"):
-            lines[line_index] = original + " done\n"
+            original = lines[line_index].rstrip("\n").rstrip("\r")
+            # Guard against double-marking
+            if not original.lower().endswith(" done"):
+                lines[line_index] = original + " done\n"
 
-        with open(CAMPAIGN_FILE, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+            with open(CAMPAIGN_FILE, "w", encoding="utf-8") as f:
+                f.writelines(lines)
 
-        logger.log(f"→ Marked as done in {CAMPAIGN_FILE}: {original.strip()}")
-    except Exception as e:
-        logger.log(f"⚠ Could not mark link done (line {line_index}): {e}")
+            logger.log(f"→ Marked as done in {CAMPAIGN_FILE}: {original.strip()}")
+        except Exception as e:
+            logger.log(f"⚠ Could not mark link done (line {line_index}): {e}")
 
 
 # ── Count Occupied Slots On One Emulator ─────────────────────────────

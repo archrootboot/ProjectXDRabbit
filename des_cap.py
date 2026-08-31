@@ -11,6 +11,10 @@ import logger
 import os
 from dotenv import load_dotenv
 
+# Shared across all emulator threads — ensures only one emulator at a time
+# goes through the find-video → click-play window.
+play_lock = None
+
 
 def build_options(udid, system_port):
     options = UiAutomator2Options()
@@ -34,7 +38,7 @@ def get_click_timeout(num_emulators):
     return base + max(0, num_emulators - 1) * per_extra
 
 
-def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events):
+def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events, play_lock=None):
     driver = None
     try:
         driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
@@ -82,7 +86,8 @@ def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ac
         watch.watch_video(
             driver, udid, stop_event,
             pause_events.get(udid),
-            paused_ack_events.get(udid)
+            paused_ack_events.get(udid),
+            play_lock
         )
 
     except Exception as e:
@@ -190,7 +195,7 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
         thread = threading.Thread(
             target=run_emulator,
             args=(udid, sys_port, stop_event, existing_drivers,
-                  merged_pause_events, merged_paused_ack_events)
+                  merged_pause_events, merged_paused_ack_events, play_lock)
         )
         new_threads[udid] = thread
         thread.start()
@@ -207,8 +212,10 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
 
 def main_pro():
     load_dotenv()
-    global webdriver_url
+    global webdriver_url, play_lock
     webdriver_url = os.getenv("WEBDRIVER_URL")
+    play_lock = threading.Lock()
+    logger.log("✓ play_lock created — emulators will take turns clicking play.")
 
     if not webdriver_url:
         logger.log("✗ WEBDRIVER_URL not set in .env file.")
@@ -236,7 +243,7 @@ def main_pro():
         thread = threading.Thread(
             target=run_emulator,
             args=(udid, sys_port, stop_events[udid], drivers,
-                  pause_events, paused_ack_events)
+                  pause_events, paused_ack_events, play_lock)
         )
         threads[udid] = thread
         thread.start()
