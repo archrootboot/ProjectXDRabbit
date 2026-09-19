@@ -7,6 +7,7 @@ import threading
 import time
 import tools.grabber as grabber
 import tools.watch as watch
+import tools.appium_manager as appium_manager
 import logger
 import os
 from dotenv import load_dotenv
@@ -41,7 +42,25 @@ def get_click_timeout(num_emulators):
 def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events, play_lock=None):
     driver = None
     try:
-        driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+        # ── connect to Appium, auto-restart if it is not running ──────────
+        try:
+            driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+        except Exception as conn_err:
+            if appium_manager.is_appium_connection_error(conn_err):
+                logger.log(f"[{udid}] ✗ Appium connection failed — attempting auto-restart...")
+                appium_port = int(os.getenv("APPIUM_PORT", "4723"))
+                restarted = appium_manager.ensure_appium_running(
+                    port=appium_port,
+                    max_wait=int(os.getenv("APPIUM_START_TIMEOUT", "30"))
+                )
+                if not restarted:
+                    raise RuntimeError(
+                        f"[{udid}] Appium could not be started on port {appium_port}."
+                    ) from conn_err
+                logger.log(f"[{udid}] → Retrying driver connection after Appium restart...")
+                driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+            else:
+                raise
         drivers[udid] = driver
         logger.log(f"✓ {udid} connected (systemPort: {system_port})")
 
