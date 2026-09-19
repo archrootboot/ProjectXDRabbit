@@ -15,6 +15,16 @@ ensure_appium_running(port=4723, max_wait=30)
 is_appium_connection_error(exc)
     → Returns True if the exception is the "WinError 10061 / connection refused"
       error so callers can detect it without string-matching themselves.
+
+is_system_port_busy_error(exc)
+    → Returns True if the exception is the UiAutomator2 "local port #XXXX is busy"
+      error, meaning the systemPort used by the driver is already occupied.
+
+ensure_system_port_free(system_port=8200)
+    → Kills any process holding `system_port` (the UiAutomator2 systemPort).
+      Call this before (re-)creating an Appium session when you catch a
+      is_system_port_busy_error, or use it proactively before every session.
+      Returns True if the port is now free, False if it could not be released.
 """
 
 import os
@@ -22,6 +32,15 @@ import subprocess
 import time
 import socket
 import logger
+
+# ── constants ─────────────────────────────────────────────────────────────────
+
+# Default Appium server port
+DEFAULT_APPIUM_PORT: int = 4723
+
+# UiAutomator2 driver systemPort — must match the 'systemPort' capability
+# you pass to Appium.  Change here if you use a different value.
+DEFAULT_SYSTEM_PORT: int = 8200
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +119,65 @@ def is_appium_connection_error(exc: Exception) -> bool:
         or "connection refused" in msg.lower()
         or ("Max retries exceeded" in msg and "NewConnectionError" in msg)
     )
+
+
+def is_system_port_busy_error(exc: Exception) -> bool:
+    """
+    Returns True when `exc` is the UiAutomator2 "systemPort is busy" error::
+
+        UiAutomator2 Server cannot start because the local port #8200 is busy.
+        Make sure the port you provide via 'systemPort' capability is not occupied.
+
+    This typically means a previous Appium session was not properly closed and
+    the UiAutomator2 server is still holding the port.
+    """
+    msg = str(exc)
+    return (
+        "is busy" in msg.lower()
+        and ("systemport" in msg.lower() or "local port" in msg.lower() or "uiautomator2" in msg.lower())
+    ) or (
+        "UiAutomator2 Server cannot start" in msg
+    )
+
+
+def ensure_system_port_free(system_port: int = DEFAULT_SYSTEM_PORT) -> bool:
+    """
+    Kill every process that is currently occupying `system_port` (the
+    UiAutomator2 systemPort capability value, default 8200).
+
+    Call this:
+      • Proactively, before each new Appium/UiAutomator2 session.
+      • Reactively, inside an except block when is_system_port_busy_error(exc)
+        returns True, then retry creating the session.
+
+    Returns True if the port appears free afterward, False on unexpected error.
+
+    Example — reactive use::
+
+        try:
+            driver = webdriver.Remote(url, options)
+        except Exception as exc:
+            if is_system_port_busy_error(exc):
+                logger.log("[AppiumManager] systemPort busy — clearing and retrying...")
+                ensure_system_port_free(8200)
+                driver = webdriver.Remote(url, options)  # retry once
+            else:
+                raise
+    """
+    logger.log(f"[AppiumManager] → Ensuring system port {system_port} is free...")
+    try:
+        _kill_process_on_port(system_port)
+        time.sleep(0.5)  # brief pause to let the OS reclaim the port
+        # Verify the port is actually free now
+        if not _is_port_open("127.0.0.1", system_port):
+            logger.log(f"[AppiumManager] ✓ System port {system_port} is now free.")
+            return True
+        else:
+            logger.log(f"[AppiumManager] ⚠ System port {system_port} still appears occupied after kill attempt.")
+            return False
+    except Exception as e:
+        logger.log(f"[AppiumManager] ⚠ Error while freeing system port {system_port}: {e}")
+        return False
 
 
 def ensure_appium_running(port: int = 4723, max_wait: int = 30) -> bool:
