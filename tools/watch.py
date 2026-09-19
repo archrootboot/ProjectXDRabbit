@@ -7,7 +7,7 @@ import logger
 import tools.yt_links_get as yt_links_get
 
 
-def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
+def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, play_lock=None):
     wait = WebDriverWait(driver, 15)
     consecutive_skips  = 0
     consecutive_errors = 0
@@ -27,6 +27,9 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
     max_point_error_time = int(os.getenv("MAX_POINT_ERROR_TIME", "1800").strip())
     point_not_updated_count = 0
     point_error_start_time  = None
+
+    # ── thread-lock state (acquired before play, released at video start) ──
+    lock_held = False
 
 
     # ── Point Check ───────────────────────────────────────────────────
@@ -154,8 +157,16 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
     # ── Wait For Video ────────────────────────────────────────────────
 
     def wait_for_video(duration):
+        nonlocal lock_held
         total_wait = duration + buffer_time
         elapsed    = 0
+
+        # ── release play lock now that the video is about to start ──────
+        if play_lock is not None and lock_held:
+            play_lock.release()
+            lock_held = False
+            logger.log(f"[{udid}] 🔓 Play lock released — video is playing.")
+
         logger.log(f"[{udid}] ▶ Video started. Waiting {total_wait}s ({duration}s + {buffer_time}s buffer)...")
 
         while not stop_event.is_set() and elapsed < total_wait:
@@ -220,6 +231,13 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
                 ))
                 time.sleep(1)
 
+                # ── acquire play lock before thumbnail check + play click ──
+                if play_lock is not None and not lock_held:
+                    logger.log(f"[{udid}] 🔒 Waiting for play lock...")
+                    play_lock.acquire()
+                    lock_held = True
+                    logger.log(f"[{udid}] 🔒 Play lock acquired.")
+
                 # ── check thumbnail and click (or skip) ──────────────
                 yt_result = yt_links_get.check_and_play(
                     driver      = driver,
@@ -280,6 +298,11 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
                 pause_gate()
 
         except Exception as e:
+            # ── safety: release lock if it was held when exception occurred ──
+            if play_lock is not None and lock_held:
+                play_lock.release()
+                lock_held = False
+                logger.log(f"[{udid}] 🔓 Play lock released (exception path).")
             consecutive_errors += 1
             logger.log(f"[{udid}] Error ({consecutive_errors}/{max_errors}): {e}, retrying in 5s...")
             time.sleep(5)

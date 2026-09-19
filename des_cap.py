@@ -7,9 +7,14 @@ import threading
 import time
 import tools.grabber as grabber
 import tools.watch as watch
+import tools.appium_manager as appium_manager
 import logger
 import os
 from dotenv import load_dotenv
+
+# Shared across all emulator threads — ensures only one emulator at a time
+# goes through the find-video → click-play window.
+play_lock = None
 
 
 def build_options(udid, system_port):
@@ -34,10 +39,28 @@ def get_click_timeout(num_emulators):
     return base + max(0, num_emulators - 1) * per_extra
 
 
-def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events):
+def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events, play_lock=None):
     driver = None
     try:
-        driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+        # ── connect to Appium, auto-restart if it is not running ──────────
+        try:
+            driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+        except Exception as conn_err:
+            if appium_manager.is_appium_connection_error(conn_err):
+                logger.log(f"[{udid}] ✗ Appium connection failed — attempting auto-restart...")
+                appium_port = int(os.getenv("APPIUM_PORT", "4723"))
+                restarted = appium_manager.ensure_appium_running(
+                    port=appium_port,
+                    max_wait=int(os.getenv("APPIUM_START_TIMEOUT", "30"))
+                )
+                if not restarted:
+                    raise RuntimeError(
+                        f"[{udid}] Appium could not be started on port {appium_port}."
+                    ) from conn_err
+                logger.log(f"[{udid}] → Retrying driver connection after Appium restart...")
+                driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+            else:
+                raise
         drivers[udid] = driver
         logger.log(f"✓ {udid} connected (systemPort: {system_port})")
 
@@ -82,7 +105,8 @@ def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ac
         watch.watch_video(
             driver, udid, stop_event,
             pause_events.get(udid),
-            paused_ack_events.get(udid)
+            paused_ack_events.get(udid),
+            play_lock
         )
 
     except Exception as e:
@@ -190,7 +214,7 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
         thread = threading.Thread(
             target=run_emulator,
             args=(udid, sys_port, stop_event, existing_drivers,
-                  merged_pause_events, merged_paused_ack_events)
+                  merged_pause_events, merged_paused_ack_events, play_lock)
         )
         new_threads[udid] = thread
         thread.start()
@@ -207,8 +231,10 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
 
 def main_pro():
     load_dotenv()
-    global webdriver_url
+    global webdriver_url, play_lock
     webdriver_url = os.getenv("WEBDRIVER_URL")
+    play_lock = threading.Lock()
+    logger.log("✓ play_lock created — emulators will take turns clicking play.")
 
     if not webdriver_url:
         logger.log("✗ WEBDRIVER_URL not set in .env file.")
@@ -236,7 +262,7 @@ def main_pro():
         thread = threading.Thread(
             target=run_emulator,
             args=(udid, sys_port, stop_events[udid], drivers,
-                  pause_events, paused_ack_events)
+                  pause_events, paused_ack_events, play_lock)
         )
         threads[udid] = thread
         thread.start()
