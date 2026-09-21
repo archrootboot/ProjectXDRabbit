@@ -5,6 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import logger
 import tools.yt_links_get as yt_links_get
+import tools.appium_manager as appium_manager
 
 
 def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, play_lock=None):
@@ -84,10 +85,24 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
         pkg = os.getenv("APP_PACKAGE")
         logger.log(f"[{udid}] ⚠ Bug detected! Restarting app...")
 
+        # ── if Appium itself is down, revive it before attempting any commands ──
+        appium_port = int(os.getenv("APPIUM_PORT", "4723"))
+        appium_timeout = int(os.getenv("APPIUM_START_TIMEOUT", "30"))
+
         try:
             driver.terminate_app(pkg)
         except Exception as e:
             logger.log(f"[{udid}] ⚠ terminate_app failed: {e}")
+            if appium_manager.is_appium_connection_error(e):
+                logger.log(f"[{udid}] ⚠ Appium connection lost — attempting to revive Appium...")
+                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
+                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
+                    return False
+                logger.log(f"[{udid}] ✓ Appium revived. Retrying terminate_app...")
+                try:
+                    driver.terminate_app(pkg)
+                except Exception:
+                    pass  # best-effort; continue to activate
 
         time.sleep(3)
 
@@ -95,7 +110,19 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
             driver.activate_app(pkg)
         except Exception as e:
             logger.log(f"[{udid}] ⚠ activate_app failed: {e}")
-            return False
+            if appium_manager.is_appium_connection_error(e):
+                logger.log(f"[{udid}] ⚠ Appium connection lost during activate — attempting to revive Appium...")
+                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
+                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
+                    return False
+                logger.log(f"[{udid}] ✓ Appium revived. Retrying activate_app...")
+                try:
+                    driver.activate_app(pkg)
+                except Exception as retry_e:
+                    logger.log(f"[{udid}] ✗ activate_app failed after Appium revival: {retry_e}")
+                    return False
+            else:
+                return False
 
         time.sleep(5)
 
@@ -305,6 +332,19 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
                 logger.log(f"[{udid}] 🔓 Play lock released (exception path).")
             consecutive_errors += 1
             logger.log(f"[{udid}] Error ({consecutive_errors}/{max_errors}): {e}, retrying in 5s...")
+
+            # ── if Appium is down, revive it immediately before the retry delay ──
+            if appium_manager.is_appium_connection_error(e):
+                appium_port = int(os.getenv("APPIUM_PORT", "4723"))
+                appium_timeout = int(os.getenv("APPIUM_START_TIMEOUT", "30"))
+                logger.log(f"[{udid}] ⚠ Appium connection error detected — attempting to revive Appium...")
+                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
+                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
+                    break
+                logger.log(f"[{udid}] ✓ Appium revived. Resetting error counter and retrying...")
+                consecutive_errors = 0
+                continue
+
             time.sleep(5)
 
             if consecutive_errors >= max_errors:

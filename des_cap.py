@@ -47,6 +47,7 @@ def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ac
             driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
         except Exception as conn_err:
             if appium_manager.is_appium_connection_error(conn_err):
+                # ── Appium server is down — revive it then retry ──────────
                 logger.log(f"[{udid}] ✗ Appium connection failed — attempting auto-restart...")
                 appium_port = int(os.getenv("APPIUM_PORT", "4723"))
                 restarted = appium_manager.ensure_appium_running(
@@ -59,6 +60,18 @@ def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ac
                     ) from conn_err
                 logger.log(f"[{udid}] → Retrying driver connection after Appium restart...")
                 driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+
+            elif appium_manager.is_system_port_busy_error(conn_err):
+                # ── UiAutomator2 systemPort is held by a stale process ────
+                logger.log(f"[{udid}] ✗ systemPort {system_port} is busy — freeing port and retrying...")
+                freed = appium_manager.ensure_system_port_free(system_port)
+                if not freed:
+                    raise RuntimeError(
+                        f"[{udid}] Could not free systemPort {system_port}."
+                    ) from conn_err
+                logger.log(f"[{udid}] → Retrying driver connection after freeing systemPort {system_port}...")
+                driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+
             else:
                 raise
         drivers[udid] = driver
