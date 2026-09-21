@@ -5,9 +5,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import logger
 import tools.yt_links_get as yt_links_get
+import tools.appium_manager as appium_manager
 
 
-def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
+def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, play_lock=None):
     wait = WebDriverWait(driver, 15)
     consecutive_skips  = 0
     consecutive_errors = 0
@@ -27,6 +28,9 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
     max_point_error_time = int(os.getenv("MAX_POINT_ERROR_TIME", "1800").strip())
     point_not_updated_count = 0
     point_error_start_time  = None
+
+    # ── thread-lock state (acquired before play, released at video start) ──
+    lock_held = False
 
 
     # ── Point Check ───────────────────────────────────────────────────
@@ -81,10 +85,24 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
         pkg = os.getenv("APP_PACKAGE")
         logger.log(f"[{udid}] ⚠ Bug detected! Restarting app...")
 
+        # ── if Appium itself is down, revive it before attempting any commands ──
+        appium_port = int(os.getenv("APPIUM_PORT", "4723"))
+        appium_timeout = int(os.getenv("APPIUM_START_TIMEOUT", "30"))
+
         try:
             driver.terminate_app(pkg)
         except Exception as e:
             logger.log(f"[{udid}] ⚠ terminate_app failed: {e}")
+            if appium_manager.is_appium_connection_error(e):
+                logger.log(f"[{udid}] ⚠ Appium connection lost — attempting to revive Appium...")
+                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
+                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
+                    return False
+                logger.log(f"[{udid}] ✓ Appium revived. Retrying terminate_app...")
+                try:
+                    driver.terminate_app(pkg)
+                except Exception:
+                    pass  # best-effort; continue to activate
 
         time.sleep(3)
 
@@ -92,7 +110,19 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
             driver.activate_app(pkg)
         except Exception as e:
             logger.log(f"[{udid}] ⚠ activate_app failed: {e}")
-            return False
+            if appium_manager.is_appium_connection_error(e):
+                logger.log(f"[{udid}] ⚠ Appium connection lost during activate — attempting to revive Appium...")
+                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
+                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
+                    return False
+                logger.log(f"[{udid}] ✓ Appium revived. Retrying activate_app...")
+                try:
+                    driver.activate_app(pkg)
+                except Exception as retry_e:
+                    logger.log(f"[{udid}] ✗ activate_app failed after Appium revival: {retry_e}")
+                    return False
+            else:
+                return False
 
         time.sleep(5)
 
@@ -154,8 +184,16 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
     # ── Wait For Video ────────────────────────────────────────────────
 
     def wait_for_video(duration):
+        nonlocal lock_held
         total_wait = duration + buffer_time
         elapsed    = 0
+
+        # ── release play lock now that the video is about to start ──────
+        if play_lock is not None and lock_held:
+            play_lock.release()
+            lock_held = False
+            logger.log(f"[{udid}] 🔓 Play lock released — video is playing.")
+
         logger.log(f"[{udid}] ▶ Video started. Waiting {total_wait}s ({duration}s + {buffer_time}s buffer)...")
 
         while not stop_event.is_set() and elapsed < total_wait:
@@ -220,6 +258,13 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
                 ))
                 time.sleep(1)
 
+                # ── acquire play lock before thumbnail check + play click ──
+                if play_lock is not None and not lock_held:
+                    logger.log(f"[{udid}] 🔒 Waiting for play lock...")
+                    play_lock.acquire()
+                    lock_held = True
+                    logger.log(f"[{udid}] 🔒 Play lock acquired.")
+
                 # ── check thumbnail and click (or skip) ──────────────
                 yt_result = yt_links_get.check_and_play(
                     driver      = driver,
@@ -280,8 +325,26 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None):
                 pause_gate()
 
         except Exception as e:
+            # ── safety: release lock if it was held when exception occurred ──
+            if play_lock is not None and lock_held:
+                play_lock.release()
+                lock_held = False
+                logger.log(f"[{udid}] 🔓 Play lock released (exception path).")
             consecutive_errors += 1
             logger.log(f"[{udid}] Error ({consecutive_errors}/{max_errors}): {e}, retrying in 5s...")
+
+            # ── if Appium is down, revive it immediately before the retry delay ──
+            if appium_manager.is_appium_connection_error(e):
+                appium_port = int(os.getenv("APPIUM_PORT", "4723"))
+                appium_timeout = int(os.getenv("APPIUM_START_TIMEOUT", "30"))
+                logger.log(f"[{udid}] ⚠ Appium connection error detected — attempting to revive Appium...")
+                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
+                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
+                    break
+                logger.log(f"[{udid}] ✓ Appium revived. Resetting error counter and retrying...")
+                consecutive_errors = 0
+                continue
+
             time.sleep(5)
 
             if consecutive_errors >= max_errors:
