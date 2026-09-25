@@ -5,6 +5,7 @@ import des_cap
 import tools.campaign as campaign
 import tools.campaign_status as campaign_status
 import tools.extract_thumbs as extract_thumbs
+import tools.emulator_watcher as emulator_watcher
 import logger
 
 current_threads = {}
@@ -13,6 +14,10 @@ current_drivers = {}
 current_pause_events = {}
 current_paused_ack_events = {}
 appium_process = None
+
+# ── Emulator Watcher state ────────────────────────────────────────────
+_watcher_thread: threading.Thread | None = None
+_watcher_stop_event: threading.Event | None = None
 
 
 # ── Options ───────────────────────────────────────────────────────────
@@ -209,6 +214,40 @@ def option_eleven():
     extract_thumbs.run_extract_thumbs()
 
 
+def option_twelve():
+    """Toggle the background emulator-watcher on or off."""
+    global _watcher_thread, _watcher_stop_event
+
+    # ── if watcher is already running, stop it ────────────────────────
+    if _watcher_thread is not None and _watcher_thread.is_alive():
+        print("\n→ Stopping Emulator Monitor...")
+        emulator_watcher.stop_watcher(_watcher_thread, _watcher_stop_event)
+        _watcher_thread = None
+        _watcher_stop_event = None
+        print("✓ Emulator Monitor stopped.")
+        return
+
+    # ── require the main script to be running first ───────────────────
+    if not current_threads:
+        print("✗ No script is running. Start the script first (option 2).")
+        return
+
+    import os
+    interval = os.getenv("EMULATOR_CHECK_INTERVAL", "30").strip()
+    print(f"\n→ Starting Emulator Monitor (polling every {interval}s)...")
+
+    _watcher_stop_event = threading.Event()
+    _watcher_thread = emulator_watcher.start_watcher(
+        current_threads,
+        current_stop_events,
+        current_drivers,
+        current_pause_events,
+        current_paused_ack_events,
+        _watcher_stop_event,
+    )
+    print(f"✓ Emulator Monitor started — will auto-detect and launch new emulators every {interval}s.")
+
+
 def stop_appium():
     global appium_process
     if appium_process and appium_process.poll() is None:
@@ -248,6 +287,10 @@ def start_appium_windows(port=4723):
 
 def show_menu():
     while True:
+        # ── build the dynamic monitor label ──────────────────────────────
+        monitor_active = _watcher_thread is not None and _watcher_thread.is_alive()
+        monitor_label  = "[ACTIVE ✓]" if monitor_active else "[inactive]"
+
         print("\n 🤖  Appium CLI Controller")
         print("1.  Start Appium Core")
         print("2.  Run Script")
@@ -260,9 +303,10 @@ def show_menu():
         print("9.  Campaign Status")
         print("10. Delete Complete Campaigns")
         print("11. Extract Thumbnails")
-        print("12. Exit")
+        print(f"12. Emulator Monitor  {monitor_label}")
+        print("13. Exit")
 
-        choice = input("Enter your choice (1-12): ").strip()
+        choice = input("Enter your choice (1-13): ").strip()
 
         if choice == "1":
             option_one()
@@ -287,20 +331,27 @@ def show_menu():
         elif choice == "11":
             option_eleven()
         elif choice == "12":
+            option_twelve()
+        elif choice == "13":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
                     print(f"⚠ These are still running: {running}")
                     confirm = input("Stop all and exit? (y/n): ").strip().lower()
                     if confirm == "y":
+                        if _watcher_thread and _watcher_thread.is_alive():
+                            emulator_watcher.stop_watcher(_watcher_thread, _watcher_stop_event)
                         des_cap.stop_all(current_threads, current_stop_events, current_drivers)
                     else:
                         continue
+            else:
+                if _watcher_thread and _watcher_thread.is_alive():
+                    emulator_watcher.stop_watcher(_watcher_thread, _watcher_stop_event)
             stop_appium()
             print("Exiting program. Goodbye!")
             break
         else:
-            print("Invalid selection. Please try again (1-12).")
+            print("Invalid selection. Please try again (1-13).")
 
 
 if __name__ == "__main__":
