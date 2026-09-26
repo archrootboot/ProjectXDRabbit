@@ -197,6 +197,19 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
         logger.log(f"[{udid}] ▶ Video started. Waiting {total_wait}s ({duration}s + {buffer_time}s buffer)...")
 
         while not stop_event.is_set() and elapsed < total_wait:
+            # ── honour a pause request mid-video ──────────────────────
+            if pause_event and pause_event.is_set():
+                logger.log(f"[{udid}] ⏸ Pause requested via menu.")
+                if paused_ack:
+                    paused_ack.set()  # tell campaign/menu side: driver is idle
+                while pause_event.is_set() and not stop_event.is_set():
+                    time.sleep(1)
+                if paused_ack:
+                    paused_ack.clear()
+                if stop_event.is_set():
+                    return "stopped"
+                logger.log(f"[{udid}] ▶ Resumed — continuing video wait.")
+
             time.sleep(check_interval)
             elapsed += check_interval
             logger.log(f"[{udid}] ⏱ Waiting... ({elapsed}s/{total_wait}s)")
