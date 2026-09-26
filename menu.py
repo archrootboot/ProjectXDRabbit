@@ -19,6 +19,9 @@ appium_process = None
 _watcher_thread: threading.Thread | None = None
 _watcher_stop_event: threading.Event | None = None
 
+# ── Script pause state ────────────────────────────────────────────────
+_script_paused = False
+
 
 # ── Options ───────────────────────────────────────────────────────────
 
@@ -38,15 +41,36 @@ def option_one():
 
 
 def option_two():
-    global current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events
+    global current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events, _script_paused
 
+    # ── if script is running, toggle pause / resume ───────────────────
     if current_threads:
         running = [udid for udid, t in current_threads.items() if t.is_alive()]
         if running:
-            print(f"✗ Script already running on: {running}")
-            print("Stop it first before starting again.")
+            if not _script_paused:
+                # ── PAUSE: set pause_event on every running emulator ──
+                print("\n⏸ Pausing script on all emulators...")
+                for udid in running:
+                    pe = current_pause_events.get(udid)
+                    if pe is not None:
+                        pe.set()
+                        logger.log(f"[{udid}] ⏸ Pause requested via menu.")
+                _script_paused = True
+                print("✓ Script paused. Press 2 again to resume.")
+            else:
+                # ── RESUME: clear pause_event on every emulator ───────
+                print("\n▶ Resuming script on all emulators...")
+                for udid in running:
+                    pe = current_pause_events.get(udid)
+                    if pe is not None:
+                        pe.clear()
+                        logger.log(f"[{udid}] ▶ Resumed via menu.")
+                _script_paused = False
+                print("✓ Script resumed.")
             return
 
+    # ── script not started yet — start it ────────────────────────────
+    _script_paused = False
     print("\nExecuting The Script...")
     current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events = des_cap.main_pro()
 
@@ -291,9 +315,18 @@ def show_menu():
         monitor_active = _watcher_thread is not None and _watcher_thread.is_alive()
         monitor_label  = "[ACTIVE ✓]" if monitor_active else "[inactive]"
 
+        # ── build the dynamic script label ───────────────────────────────
+        _any_running = current_threads and any(t.is_alive() for t in current_threads.values())
+        if _any_running and _script_paused:
+            script_label = "[PAUSED ⏸]"
+        elif _any_running:
+            script_label = "[RUNNING ▶]"
+        else:
+            script_label = "[inactive]"
+
         print("\n 🤖  Appium CLI Controller")
         print("1.  Start Appium Core")
-        print("2.  Run Script")
+        print(f"2.  Run Script            {script_label}")
         print("3.  Check Status")
         print("4.  Add New Emulators")
         print("5.  Stop Specific Emulator")
