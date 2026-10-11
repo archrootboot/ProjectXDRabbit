@@ -28,6 +28,7 @@ ensure_system_port_free(system_port=8200)
 """
 
 import os
+import shutil
 import subprocess
 import time
 import socket
@@ -83,14 +84,53 @@ def _kill_process_on_port(port: int) -> None:
         logger.log(f"[AppiumManager] ⚠ Could not kill process on port {port}: {e}")
 
 
+def _resolve_appium_executable() -> str:
+    """
+    Resolve the full path to the Appium executable.
+
+    On Windows, `npm install -g` places `appium.cmd` inside the user-level
+    npm global bin directory (e.g. C:\\Users\\<user>\\AppData\\Roaming\\npm).
+    This directory is in the *user* PATH but is often invisible to subprocesses
+    that only inherit the *system* PATH.  shutil.which() reads os.environ["PATH"]
+    from the current process (which includes user PATH entries) and therefore
+    finds the binary even when a bare Popen(["appium", ...]) would raise
+    FileNotFoundError.
+
+    Falls back to the default npm global bin location if shutil.which fails.
+    Raises FileNotFoundError if the executable cannot be located.
+    """
+    # Try the platform-native name first (appium.cmd on Windows, appium on POSIX)
+    for candidate in (["appium.cmd", "appium"] if os.name == "nt" else ["appium"]):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+
+    # Hard-coded fallback for the default Windows npm global bin location
+    if os.name == "nt":
+        fallback = os.path.join(
+            os.environ.get("APPDATA", ""), "npm", "appium.cmd"
+        )
+        if os.path.isfile(fallback):
+            logger.log(
+                f"[AppiumManager] ⚠ 'appium' not on PATH — using fallback: {fallback}"
+            )
+            return fallback
+
+    raise FileNotFoundError(
+        "'appium' executable not found. "
+        "Install it with: npm install -g appium"
+    )
+
+
 def _start_appium(port: int) -> subprocess.Popen:
     """
     Launch Appium in the background and return the Popen handle.
     stdout/stderr are discarded so they do not pollute the console.
     """
-    logger.log(f"[AppiumManager] → Starting Appium on port {port}...")
+    appium_bin = _resolve_appium_executable()
+    logger.log(f"[AppiumManager] → Starting Appium on port {port} ({appium_bin})...")
     proc = subprocess.Popen(
-        ["appium", "--port", str(port)],
+        [appium_bin, "--port", str(port)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW,
