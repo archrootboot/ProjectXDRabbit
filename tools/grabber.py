@@ -16,15 +16,22 @@ def get_emulator_list():
         emulators = []
         port = 8200
         for line in lines:
-            if 'emulator' in line and 'device' in line:
-                id_only = line.split('\t')[0].strip()
-                emulators.append([id_only, port])
-                port += 1
+            line = line.strip()
+            if not line or 'offline' in line or 'unauthorized' in line:
+                continue
+            # Accept both emulator-XXXX  and  <host>:<port>  style devices
+            if 'device' in line:
+                id_only = line.split()[0].strip()
+                is_emulator = 'emulator' in id_only
+                is_tcpip    = ':' in id_only          # e.g. 127.0.0.1:21503
+                if is_emulator or is_tcpip:
+                    emulators.append([id_only, port])
+                    port += 1
 
         if not emulators:
-            logger.log("⚠ No emulators detected via ADB.")
+            logger.log("⚠ No devices detected via ADB.")
         else:
-            logger.log(f"✓ Found {len(emulators)} emulator(s): {[e[0] for e in emulators]}")
+            logger.log(f"✓ Found {len(emulators)} device(s): {[e[0] for e in emulators]}")
 
         return emulators
 
