@@ -285,7 +285,7 @@ def watch_video(udid, stop_event, pause_event=None, paused_ack=None, play_lock=N
 
                 if result == "done":
                     # Tap back (same coordinate as original code)
-                    adb.tap(udid, 13, 943)
+                    adb.tap(udid, 12, 1010)
                     logger.log(f"[{udid}] ✓ Tapped back.")
                     point_check(old_point_value)
                     consecutive_errors = 0
