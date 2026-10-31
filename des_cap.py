@@ -1,15 +1,22 @@
-from appium import webdriver
-from appium.options.android import UiAutomator2Options
-from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+"""
+des_cap.py
+──────────
+Main emulator orchestrator — pure ADB version.
+
+No Appium, no WebDriver.  Each emulator thread:
+  1. Starts the app via ADB.
+  2. Navigates to the watch screen.
+  3. Runs the watch_video loop (tools/watch.py).
+"""
+
+import os
 import threading
 import time
+
+import tools.adb_controller as adb
 import tools.grabber as grabber
 import tools.watch as watch
-import tools.appium_manager as appium_manager
 import logger
-import os
 from dotenv import load_dotenv
 
 # Shared across all emulator threads — ensures only one emulator at a time
@@ -17,160 +24,116 @@ from dotenv import load_dotenv
 play_lock = None
 
 
-def build_options(udid, system_port):
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.udid = udid
-    options.app_package = os.getenv("APP_PACKAGE")
-    options.app_activity = os.getenv("APP_MAIN_ACTIVITY")
-    options.no_reset = True
-    options.full_reset = False
-    options.new_command_timeout = int(os.getenv("NEW_COMMAND_TIMEOUT"))
-    options.adb_exec_timeout = int(os.getenv("ADB_EXEC_TIMEOUT", 60000))
-    options.uiautomator2_server_launch_timeout = int(os.getenv("UIAUTOMATOR2_SERVER_LAUNCH_TIMEOUT", 60000))
-    options.set_capability("systemPort", system_port)
-    return options
+def run_emulator(udid, stop_event, drivers, pause_events, paused_ack_events, play_lock=None):
+    """
+    Thread target for one emulator.
 
+    Parameters
+    ----------
+    udid              : device serial (e.g. 'emulator-5554')
+    stop_event        : threading.Event — set to stop this thread
+    drivers           : shared dict {udid: None}  (kept for API compat with menu.py)
+    pause_events      : shared dict {udid: threading.Event}
+    paused_ack_events : shared dict {udid: threading.Event}
+    play_lock         : shared threading.Lock
+    """
+    pkg      = os.getenv("APP_PACKAGE")
+    activity = os.getenv("APP_MAIN_ACTIVITY")
 
-def get_click_timeout(num_emulators):
-    """Scale the WebDriverWait timeout based on how many emulators are running."""
-    base = 30
-    per_extra = 3
-    return base + max(0, num_emulators - 1) * per_extra
-
-
-def run_emulator(udid, system_port, stop_event, drivers, pause_events, paused_ack_events, play_lock=None):
-    driver = None
     try:
-        # ── connect to Appium, auto-restart if it is not running ──────────
-        try:
-            driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
-        except Exception as conn_err:
-            if appium_manager.is_appium_connection_error(conn_err):
-                # ── Appium server is down — revive it then retry ──────────
-                logger.log(f"[{udid}] ✗ Appium connection failed — attempting auto-restart...")
-                appium_port = int(os.getenv("APPIUM_PORT", "4723"))
-                restarted = appium_manager.ensure_appium_running(
-                    port=appium_port,
-                    max_wait=int(os.getenv("APPIUM_START_TIMEOUT", "30"))
-                )
-                if not restarted:
-                    raise RuntimeError(
-                        f"[{udid}] Appium could not be started on port {appium_port}."
-                    ) from conn_err
-                logger.log(f"[{udid}] → Retrying driver connection after Appium restart...")
-                driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
-
-            elif appium_manager.is_system_port_busy_error(conn_err):
-                # ── UiAutomator2 systemPort is held by a stale process ────
-                logger.log(f"[{udid}] ✗ systemPort {system_port} is busy — freeing port and retrying...")
-                freed = appium_manager.ensure_system_port_free(system_port)
-                if not freed:
-                    raise RuntimeError(
-                        f"[{udid}] Could not free systemPort {system_port}."
-                    ) from conn_err
-                logger.log(f"[{udid}] → Retrying driver connection after freeing systemPort {system_port}...")
-                driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
-
-            else:
-                raise
-        drivers[udid] = driver
-        logger.log(f"✓ {udid} connected (systemPort: {system_port})")
-
-        # ── open app with retry ──
         logger.log(f"→ Opening app on {udid}...")
+
+        # Start / bring app to foreground with retry
         for attempt in range(3):
-            try:
-                driver.activate_app(os.getenv("APP_PACKAGE"))
+            ok = adb.start_app(udid, pkg, activity)
+            if ok:
                 logger.log(f"✓ App opened on {udid}")
                 break
-            except Exception as e:
-                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to open app: {e}")
-                time.sleep(3)
+            logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/3 failed to open app.")
+            time.sleep(3)
         else:
             raise Exception(f"[{udid}] Failed to open app after 3 attempts")
 
-        # ── wait for app to load before clicking ──
+        # Mark as "connected" in the shared drivers dict
+        drivers[udid] = udid   # use udid as a sentinel (no driver object needed)
+        logger.log(f"✓ {udid} registered")
+
+        # Wait for app to fully load
         time.sleep(5)
 
-        # ── scale timeout based on number of active emulators ──
-        click_timeout = get_click_timeout(len(drivers))
+        # Scale click timeout based on number of active emulators
+        click_timeout = 30 + max(0, len(drivers) - 1) * 3
         logger.log(f"[{udid}] → Using click timeout: {click_timeout}s (emulators: {len(drivers)})")
-        wait = WebDriverWait(driver, click_timeout)
 
-        # ── click element after app opens with retry ──
+        # Wait then click the watch button
         logger.log(f"→ wait 10s before click element on {udid}...")
         time.sleep(10)
+
+        _RES_WATCH = "com.view.ytrabbit:id/textView4df"
         for attempt in range(5):
-            try:
-                element = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
-                ))
-                element.click()
+            el = adb.wait_for_element(udid, timeout=click_timeout, resource_id=_RES_WATCH)
+            if el is not None:
+                adb.tap_element(udid, el)
                 logger.log(f"✓ Element clicked on {udid}")
                 break
-            except Exception as e:
-                logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/5 failed to click element: {e}")
-                time.sleep(10)
+            logger.log(f"⚠ [{udid}] Attempt {attempt + 1}/5 failed to click element.")
+            time.sleep(10)
         else:
             raise Exception(f"[{udid}] Failed to click element after 5 attempts")
 
         watch.watch_video(
-            driver, udid, stop_event,
+            udid,
+            stop_event,
             pause_events.get(udid),
             paused_ack_events.get(udid),
-            play_lock
+            play_lock,
         )
 
     except Exception as e:
         logger.log(f"✗ Error with {udid}: {e}")
     finally:
-        if driver is not None:
-            try:
-                driver.quit()
-                logger.log(f"✓ {udid} disconnected")
-            except Exception:
-                pass
+        # Remove from drivers dict on exit
+        drivers.pop(udid, None)
+        logger.log(f"✓ {udid} thread exiting")
 
 
 # ── Thread control functions ──────────────────────────────────────────
 
 def stop_one(udid, threads, stop_events, drivers):
-    if udid in stop_events:
-        if udid in drivers:
-            if threads[udid].is_alive():
-                try:
-                    logger.log(f"→ Closing app on {udid}...")
-                    drivers[udid].terminate_app(os.getenv("APP_PACKAGE"))
-                except Exception as e:
-                    logger.log(f"⚠ Could not close app on {udid}: {e}")
-            else:
-                logger.log(f"→ {udid} already stopped, skipping app close.")
-
-        stop_events[udid].set()
-
-        logger.log(f"→ Waiting for {udid} thread to stop...")
-        threads[udid].join(timeout=15)
-
-        if threads[udid].is_alive():
-            logger.log(f"⚠ {udid} thread did not stop cleanly within timeout.")
-        else:
-            logger.log(f"✓ {udid} stopped cleanly.")
-    else:
+    if udid not in stop_events:
         logger.log(f"✗ {udid} not found.")
+        return
+
+    if udid in drivers and threads.get(udid) and threads[udid].is_alive():
+        try:
+            logger.log(f"→ Closing app on {udid}...")
+            adb.stop_app(udid, os.getenv("APP_PACKAGE"))
+        except Exception as e:
+            logger.log(f"⚠ Could not close app on {udid}: {e}")
+    else:
+        logger.log(f"→ {udid} already stopped, skipping app close.")
+
+    stop_events[udid].set()
+
+    logger.log(f"→ Waiting for {udid} thread to stop...")
+    threads[udid].join(timeout=15)
+
+    if threads[udid].is_alive():
+        logger.log(f"⚠ {udid} thread did not stop cleanly within timeout.")
+    else:
+        logger.log(f"✓ {udid} stopped cleanly.")
 
 
 def stop_all(threads, stop_events, drivers):
     for udid in stop_events:
-        if udid in drivers:
-            if udid in threads and threads[udid].is_alive():
-                try:
-                    logger.log(f"→ Closing app on {udid}...")
-                    drivers[udid].terminate_app(os.getenv("APP_PACKAGE"))
-                except Exception as e:
-                    logger.log(f"⚠ Could not close app on {udid}: {e}")
-            else:
-                logger.log(f"→ {udid} already stopped, skipping app close.")
+        if udid in drivers and udid in threads and threads[udid].is_alive():
+            try:
+                logger.log(f"→ Closing app on {udid}...")
+                adb.stop_app(udid, os.getenv("APP_PACKAGE"))
+            except Exception as e:
+                logger.log(f"⚠ Could not close app on {udid}: {e}")
+        else:
+            logger.log(f"→ {udid} already stopped, skipping app close.")
 
     for event in stop_events.values():
         event.set()
@@ -208,7 +171,7 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
     new_pause_events      = {}
     new_paused_ack_events = {}
 
-    for i, (udid, sys_port) in enumerate(emulators):
+    for i, (udid, _) in enumerate(emulators):
         if udid in existing_threads and existing_threads[udid].is_alive():
             logger.log(f"→ {udid} already running, skipping.")
             continue
@@ -226,7 +189,7 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
 
         thread = threading.Thread(
             target=run_emulator,
-            args=(udid, sys_port, stop_event, existing_drivers,
+            args=(udid, stop_event, existing_drivers,
                   merged_pause_events, merged_paused_ack_events, play_lock)
         )
         new_threads[udid] = thread
@@ -244,20 +207,15 @@ def add_new_emulators(existing_threads, existing_stop_events, existing_drivers,
 
 def main_pro():
     load_dotenv()
-    global webdriver_url, play_lock
-    webdriver_url = os.getenv("WEBDRIVER_URL")
+    global play_lock
     play_lock = threading.Lock()
     logger.log("✓ play_lock created — emulators will take turns clicking play.")
-
-    if not webdriver_url:
-        logger.log("✗ WEBDRIVER_URL not set in .env file.")
-        return {}, {}, {}, {}
 
     emulators = grabber.get_emulator_list()
 
     if not emulators:
         logger.log("✗ No emulators found. Aborting.")
-        return {}, {}, {}, {}
+        return {}, {}, {}, {}, {}
 
     stop_events       = {}
     threads           = {}
@@ -265,16 +223,15 @@ def main_pro():
     pause_events      = {}
     paused_ack_events = {}
 
-    # ── create all events first so threads share the same dict references ──
     for udid, _ in emulators:
         stop_events[udid]       = threading.Event()
         pause_events[udid]      = threading.Event()
         paused_ack_events[udid] = threading.Event()
 
-    for i, (udid, sys_port) in enumerate(emulators):
+    for i, (udid, _) in enumerate(emulators):
         thread = threading.Thread(
             target=run_emulator,
-            args=(udid, sys_port, stop_events[udid], drivers,
+            args=(udid, stop_events[udid], drivers,
                   pause_events, paused_ack_events, play_lock)
         )
         threads[udid] = thread

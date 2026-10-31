@@ -4,11 +4,10 @@ tools/yt_links_get.py
 Thumbnail-based video skip detection using perceptual hashing (pHash).
 
 How it works:
-    1. Capture a screenshot of the current screen via Appium.
-    2. Capture directly from imageView_img element (element.screenshot_as_png).
-    3. Compute a 64-bit pHash fingerprint — near-zero CPU cost.
-    4. Compare against hashes pre-built from your skip_thumbs/ folder.
-    5. If Hamming distance <= threshold → same video → skip.
+    1. Capture a screenshot of the current element via ADB (screencap + crop).
+    2. Compute dual-hash fingerprint (aHash + wHash) — near-zero CPU cost.
+    3. Compare against hashes pre-built from your skip_thumbs/ folder.
+    4. If Hamming distance <= threshold → same video → skip.
        Otherwise → click play normally.
 
 Setup:
@@ -21,11 +20,10 @@ Setup:
 CPU cost:
     - pHash computation  : ~1-3ms per image
     - Hash comparison    : microseconds (integer XOR)
-    - Screenshot capture : ~200-500ms (Appium, unavoidable)
+    - Screenshot capture : ~300-600ms (ADB screencap, unavoidable)
 """
 
 import os
-import io
 import logger
 
 # ── lazy imports (only loaded if this module is used) ─────────────────
@@ -41,14 +39,11 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────
 
-SKIP_THUMBS_DIR  = "skip_thumbs"  # folder with reference thumbnails
+SKIP_THUMBS_DIR  = "skip_thumbs"
 
 # Dual-hash matching (aHash + wHash must both agree)
-# aHash catches overall brightness/color structure  → robust to overlays
-# wHash catches wavelet frequency patterns          → robust to resizing
-# Both must be within threshold to count as a match (reduces false positives)
-AHASH_THRESHOLD  =  int(os.getenv("AHASH_THRESHOLD", 8))         # aHash Hamming distance ≤ this = match
-WHASH_THRESHOLD  =  int(os.getenv("WHASH_THRESHOLD", 12))        # wHash Hamming distance ≤ this = match
+AHASH_THRESHOLD  = int(os.getenv("AHASH_THRESHOLD", 8))
+WHASH_THRESHOLD  = int(os.getenv("WHASH_THRESHOLD", 12))
 
 
 # ── Build Skip Hashes ─────────────────────────────────────────────────
@@ -56,9 +51,8 @@ WHASH_THRESHOLD  =  int(os.getenv("WHASH_THRESHOLD", 12))        # wHash Hamming
 def build_skip_hashes():
     """
     Read every image in skip_thumbs/ and compute its pHash.
-    Returns a dict: { filename: pHash } for use in check_and_play().
-
-    Call this ONCE at startup — result stays in memory for the session.
+    Returns a dict: { filename: {"ahash": ..., "whash": ...} }.
+    Call this ONCE at startup.
     """
     if not _DEPS_OK:
         logger.log("[YT] ✗ Cannot build hashes — missing dependencies.")
@@ -79,7 +73,6 @@ def build_skip_hashes():
         fpath = os.path.join(SKIP_THUMBS_DIR, fname)
         try:
             img  = Image.open(fpath).convert("RGB")
-            # store both hash types per image
             hashes[fname] = {
                 "ahash": imagehash.average_hash(img),
                 "whash": imagehash.whash(img),
@@ -96,52 +89,50 @@ def build_skip_hashes():
     return hashes
 
 
-# ── Capture Thumbnail Directly from Element ───────────────────────────
+# ── Capture Thumbnail Via ADB ─────────────────────────────────────────
 
 THUMB_ELEMENT_ID = "com.view.ytrabbit:id/imageView_img"
 
-def _capture_thumbnail(driver, udid):
+def _capture_thumbnail(udid, thumb_el=None):
     """
-    Capture the thumbnail image directly from the imageView_img element
-    using element.screenshot_as_png — no full-screen capture needed.
-
-    This is faster and more precise than a full screenshot + crop:
-      - Only the exact element pixels are transferred
-      - No coordinate math required
-      - Unaffected by screen resolution or density differences
+    Capture the thumbnail using ADB:
+      • If thumb_el (parsed XML element) is provided → full screenshot + crop
+        to the element's bounding box (most accurate).
+      • Fallback: find the element via a fresh uiautomator dump, then crop.
+      • If cropping fails → return None (fail-safe; play will proceed).
 
     Returns a PIL Image (RGB), or None on failure.
     """
     if not _DEPS_OK:
         return None
 
+    import tools.adb_controller as adb
+
     try:
-        from appium.webdriver.common.appiumby import AppiumBy
+        # If we weren't given a pre-fetched element, look it up now
+        if thumb_el is None:
+            root   = adb.dump_ui(udid)
+            thumb_el = adb.find_element(root, resource_id=THUMB_ELEMENT_ID)
 
-        el        = driver.find_element(AppiumBy.ID, THUMB_ELEMENT_ID)
-        png_bytes = el.screenshot_as_png          # element-level screenshot
-        img       = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        if thumb_el is None:
+            logger.log(f"[{udid}][YT] ✗ Thumbnail element not found in UI dump.")
+            return None
 
-        logger.log(f"[{udid}][YT] ✓ Thumbnail captured from element "
-                   f"({img.width}×{img.height}px)")
+        img = adb.element_screenshot(udid, thumb_el)
+        if img is None:
+            return None
+
+        logger.log(f"[{udid}][YT] ✓ Thumbnail captured ({img.width}×{img.height}px).")
         return img
 
     except Exception as e:
-        logger.log(f"[{udid}][YT] ✗ Element screenshot failed: {e}")
+        logger.log(f"[{udid}][YT] ✗ Thumbnail capture failed: {e}")
         return None
+
 
 def _is_skip_thumbnail(thumb_img, skip_hashes, udid):
     """
     Dual-hash comparison: aHash + wHash must BOTH be within threshold.
-
-    Why dual hash?
-      - Captured thumbnail has a play button overlay in the centre
-      - Reference thumbnail (from YouTube) has black bars and different crop
-      - pHash (DCT-based) is too sensitive to these structural differences
-      - aHash (average brightness) + wHash (wavelet) are both robust to
-        overlays, slight crops, and resolution differences — together they
-        give high accuracy with very low false-positive rate.
-
     Returns (True, matched_filename) or (False, None).
     """
     if not skip_hashes or not _DEPS_OK:
@@ -157,26 +148,21 @@ def _is_skip_thumbnail(thumb_img, skip_hashes, udid):
     best_a    = None
     best_w    = None
     best_name = None
-
-    # track closest non-matching reference for the "no match" log
-    close_a    = None
-    close_w    = None
+    close_a   = None
+    close_w   = None
     close_name = None
 
     for fname, ref in skip_hashes.items():
         a_dist = cur_ahash - ref["ahash"]
         w_dist = cur_whash - ref["whash"]
 
-        # both must match — dual vote reduces false positives
         if a_dist <= AHASH_THRESHOLD and w_dist <= WHASH_THRESHOLD:
-            # pick closest overall match if multiple qualify
             score = a_dist + w_dist
             if best_name is None or score < (best_a + best_w):
                 best_a    = a_dist
                 best_w    = w_dist
                 best_name = fname
         else:
-            # track the closest non-matching reference for diagnostics
             score = a_dist + w_dist
             if close_name is None or score < (close_a + close_w):
                 close_a    = a_dist
@@ -200,19 +186,16 @@ def _is_skip_thumbnail(thumb_img, skip_hashes, udid):
 
 # ── Save Current Thumbnail (helper for building skip list) ────────────
 
-def save_current_thumbnail(driver, udid, filename=None):
+def save_current_thumbnail(udid, filename=None):
     """
-    Convenience helper: capture the current thumbnail and save it to
-    skip_thumbs/ so you can build your reference set without manually
-    cropping screenshots.
-
+    Capture the current thumbnail and save it to skip_thumbs/.
     Usage (call from a one-off script or REPL):
         import tools.yt_links_get as yt
         hashes = yt.build_skip_hashes()
-        yt.save_current_thumbnail(driver, "emulator-5556", "video_name.png")
+        yt.save_current_thumbnail("emulator-5556", "video_name.png")
     """
     os.makedirs(SKIP_THUMBS_DIR, exist_ok=True)
-    img = _capture_thumbnail(driver, udid)
+    img = _capture_thumbnail(udid)
     if img is None:
         logger.log(f"[{udid}][YT] ✗ Could not capture thumbnail to save.")
         return None
@@ -229,22 +212,22 @@ def save_current_thumbnail(driver, udid, filename=None):
 
 # ── Main Entry Point ──────────────────────────────────────────────────
 
-def check_and_play(driver, udid, skip_hashes, click_fn):
+def check_and_play(udid, skip_hashes, click_fn, thumb_el=None):
     """
     Thumbnail-based skip-or-play gate. Call instead of clicking play.
 
     Flow:
-        1. Capture screenshot → crop to thumbnail region.
+        1. Capture screenshot → crop to thumbnail element.
         2. Compute pHash → compare against skip_hashes.
         3. Match found  → return "skip"  (no click performed).
         4. No match     → call click_fn() → return "play".
         5. Capture fail → call click_fn() → return "unknown" (fail-open).
 
     Args:
-        driver      : Appium WebDriver instance
-        udid        : device/emulator ID string
+        udid        : device serial string
         skip_hashes : dict returned by build_skip_hashes()
         click_fn    : zero-arg callable that clicks the play button
+        thumb_el    : optional pre-fetched XML element for the thumbnail
 
     Returns:
         "skip"    → video matched skip list, no click made
@@ -256,20 +239,17 @@ def check_and_play(driver, udid, skip_hashes, click_fn):
         click_fn()
         return "unknown"
 
-    # ── capture & hash current thumbnail ─────────────────────────────
-    thumb = _capture_thumbnail(driver, udid)
+    thumb = _capture_thumbnail(udid, thumb_el=thumb_el)
 
     if thumb is None:
         logger.log(f"[{udid}][YT] ⚠ Capture failed — playing video (fail-open).")
         click_fn()
         return "unknown"
 
-    # ── compare against skip references ──────────────────────────────
     matched, fname = _is_skip_thumbnail(thumb, skip_hashes, udid)
 
     if matched:
         return "skip"
 
-    # ── not a skip video — click play ────────────────────────────────
     click_fn()
     return "play"

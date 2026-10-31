@@ -1,116 +1,91 @@
-from appium import webdriver
-from appium.options.android import UiAutomator2Options
-from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+"""
+tools/campaign_status.py
+────────────────────────
+Campaign status checker and completed-campaign deleter — pure ADB version.
+No Appium, no WebDriver.
+"""
+
+import os
 import threading
 import time
-import os
+
+import tools.adb_controller as adb
 import tools.grabber as grabber
 import logger
 from dotenv import load_dotenv
 
-
-# ── Build Options ─────────────────────────────────────────────────────
-
-def build_options(udid, system_port):
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.udid = udid
-    options.app_package = os.getenv("APP_PACKAGE")
-    options.app_activity = os.getenv("APP_MAIN_ACTIVITY")
-    options.no_reset = True
-    options.full_reset = False
-    options.new_command_timeout = int(os.getenv("NEW_COMMAND_TIMEOUT"))
-    options.set_capability("systemPort", system_port)
-    return options
-
-
 # ── Constants ─────────────────────────────────────────────────────────
 
 MAX_CAMPAIGNS = 3
-RECYCLER_ID   = "com.view.ytrabbit:id/recyclerView_list"
+
+# Resource IDs
+_RES_BTN_BACKS    = "com.view.ytrabbit:id/btn_backs"
+_RES_MY_CAMPAIGN  = "com.view.ytrabbit:id/textView7"
+_RES_TIME         = "com.view.ytrabbit:id/textView_time"
+_RES_DONE         = "com.view.ytrabbit:id/textView_done"
+_RES_MIN          = "com.view.ytrabbit:id/textView_min"
+_RES_MAX          = "com.view.ytrabbit:id/textView_max"
+_RES_BTN_BACKSE   = "com.view.ytrabbit:id/btn_backse"
+_RES_OK_BTN       = "android:id/button1"
 
 
 # ── Scrape Campaign Items ─────────────────────────────────────────────
 
-def _get_indexed_text(driver, resource_id, index):
+def scrape_campaign_items(udid):
     """
-    Read text from the nth element (1-based) matching a resource-id.
-    Uses XPath index so each slot maps to the correct row.
-    Returns empty string on any failure.
+    Probe campaign slots [1]→[MAX_CAMPAIGNS] from the current UI dump.
+
+    A slot is considered empty when textView_time returns nothing.
+    Returns a list of campaign dicts.
     """
-    xpath = f'(//android.widget.TextView[@resource-id="{resource_id}"])[{index}]'
-    try:
-        el = driver.find_element(AppiumBy.XPATH, xpath)
-        return el.text.strip()
-    except Exception:
-        return ""
+    root = adb.dump_ui(udid)
+    if root is None:
+        logger.log(f"[{udid}] ⚠ Could not dump UI for campaign scrape.")
+        return []
 
-
-def scrape_campaign_items(driver, udid):
-    """
-    Probe slots [1]→[3] using exact resource-IDs found via Appium Inspector:
-
-      textView_done  → status / completion timestamp
-      textView_time  → watch seconds value  (e.g. "65")
-      textView_min   → views done           (e.g. "20")
-      textView_max   → views total          (e.g. "20")
-
-    A slot is considered empty when textView_time returns nothing for that index.
-    Availability = MAX_CAMPAIGNS − filled slots.
-    """
-    wait = WebDriverWait(driver, 20)
     campaigns = []
 
-    # ── Wait for the recycler to appear ──────────────────────────
-    try:
-        wait.until(EC.presence_of_element_located(
-            (AppiumBy.ID, RECYCLER_ID)
-        ))
-    except Exception:
-        logger.log(f"[{udid}] ⚠ recyclerView_list not found — no campaigns.")
-        return campaigns
-
-    # ── Probe each slot ───────────────────────────────────────────
     for index in range(1, MAX_CAMPAIGNS + 1):
+        time_el = adb.find_nth_element(root, _RES_TIME, index)
+        if time_el is None:
+            logger.log(f"[{udid}] → Slot [{index}] empty — stopping.")
+            break
 
-        # textView_time is always present when a slot is occupied;
-        # use it as the existence check
-        watch_text = _get_indexed_text(driver, "com.view.ytrabbit:id/textView_time", index)
+        watch_text = time_el.attrib.get("text", "").strip()
         if not watch_text:
             logger.log(f"[{udid}] → Slot [{index}] empty — stopping.")
             break
 
-        # ── Watch seconds ─────────────────────────────────────────
+        # Watch seconds
         watch_seconds = 0
         try:
             watch_seconds = int(watch_text)
         except ValueError:
             pass
 
-        # ── Views done / total ────────────────────────────────────
+        # Views done / total
         views_done  = 0
         views_total = 0
         try:
-            views_done  = int(_get_indexed_text(driver, "com.view.ytrabbit:id/textView_min", index))
+            min_el = adb.find_nth_element(root, _RES_MIN, index)
+            if min_el is not None:
+                views_done = int(min_el.attrib.get("text", "0").strip())
         except ValueError:
             pass
         try:
-            views_total = int(_get_indexed_text(driver, "com.view.ytrabbit:id/textView_max", index))
+            max_el = adb.find_nth_element(root, _RES_MAX, index)
+            if max_el is not None:
+                views_total = int(max_el.attrib.get("text", "0").strip())
         except ValueError:
             pass
 
-        # ── Status / completion time ──────────────────────────────
-        # textView_done values:
-        #   Completed   → "complete:2026-07-20 22:00:45 (UTC)"  (timestamp after colon)
-        #   In-progress → "complete:"                            (colon, nothing after)
-        status_text   = _get_indexed_text(driver, "com.view.ytrabbit:id/textView_done", index)
+        # Status / completion time
+        done_el     = adb.find_nth_element(root, _RES_DONE, index)
+        status_text = done_el.attrib.get("text", "").strip() if done_el is not None else ""
         complete_time = ""
         if "complete:" in status_text:
             complete_time = status_text.split("complete:", 1)[1].strip()
 
-        # Completed only when there is an actual timestamp after "complete:"
         is_complete = bool(complete_time)
 
         campaigns.append({
@@ -131,51 +106,41 @@ def scrape_campaign_items(driver, udid):
     return campaigns
 
 
-# ── Scrape One Emulator ───────────────────────────────────────────────
+# ── Navigate to My Campaign ───────────────────────────────────────────
 
-def check_campaigns_for_emulator(udid, system_port, webdriver_url, results, results_lock):
-    driver = None
+def _navigate_to_my_campaign(udid, timeout=30):
+    """Navigate from any screen to the My Campaign list."""
+    pkg      = os.getenv("APP_PACKAGE")
+    activity = os.getenv("APP_MAIN_ACTIVITY")
+    adb.start_app(udid, pkg, activity)
+    time.sleep(5)
+
+    logger.log(f"[{udid}] → Opening My Campaign screen...")
+    adb.click_by_id(udid, _RES_MY_CAMPAIGN, timeout=timeout)
+    time.sleep(2)
+
+
+# ── Check Campaigns For One Emulator ─────────────────────────────────
+
+def check_campaigns_for_emulator(udid, results, results_lock):
     try:
-        logger.log(f"[{udid}] → Connecting for campaign status check...")
-        driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+        logger.log(f"[{udid}] → Starting campaign status check...")
+        _navigate_to_my_campaign(udid)
 
-        pkg = os.getenv("APP_PACKAGE")
-        driver.activate_app(pkg)
-        time.sleep(5)
-
-        wait = WebDriverWait(driver, 30)
-
-        # ── Navigate to My Campaign ───────────────────────────────
-        logger.log(f"[{udid}] → Opening My Campaign screen...")
-        my_campaign = wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
-        ))
-        my_campaign.click()
-        time.sleep(2)
-
-        # ── Scrape campaign list ──────────────────────────────────
-        campaigns = scrape_campaign_items(driver, udid)
+        campaigns = scrape_campaign_items(udid)
         logger.log(f"[{udid}] ✓ Found {len(campaigns)} campaign(s)")
 
         with results_lock:
             results[udid] = campaigns
 
-        # ── navigate back to main screen ──
-        wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
-        )).click()
+        # Navigate back to main screen
+        adb.click_by_id(udid, _RES_BTN_BACKSE, timeout=20)
         logger.log(f"[{udid}] ✓ Navigated back to main screen.")
 
     except Exception as e:
         logger.log(f"[{udid}] ✗ Status check error: {e}")
         with results_lock:
             results[udid] = []
-    finally:
-        if driver is not None:
-            try:
-                driver.quit()
-            except Exception:
-                pass
 
 
 # ── Print Report ──────────────────────────────────────────────────────
@@ -229,7 +194,6 @@ def print_report(results):
         grand_total_views_max  += total_views_max
         grand_total_available  += slots_avail
 
-    # ── Grand Summary ─────────────────────────────────────────────
     total_emulators = len(results)
     total_slots     = total_emulators * MAX_CAMPAIGNS
 
@@ -244,15 +208,10 @@ def print_report(results):
     print(divider)
 
 
-# ── Main Entry ────────────────────────────────────────────────────────
+# ── Main Entry for Status ─────────────────────────────────────────────
 
 def run_campaign_status():
     load_dotenv()
-    webdriver_url = os.getenv("WEBDRIVER_URL")
-
-    if not webdriver_url:
-        print("✗ WEBDRIVER_URL not set in .env file.")
-        return
 
     emulators = grabber.get_emulator_list()
     if not emulators:
@@ -265,16 +224,16 @@ def run_campaign_status():
     results_lock = threading.Lock()
     threads      = []
 
-    for i, (udid, sys_port) in enumerate(emulators):
+    for i, (udid, _) in enumerate(emulators):
         t = threading.Thread(
             target=check_campaigns_for_emulator,
-            args=(udid, sys_port, webdriver_url, results, results_lock)
+            args=(udid, results, results_lock)
         )
         threads.append(t)
         t.start()
 
         if i < len(emulators) - 1:
-            time.sleep(5)  # stagger connections
+            time.sleep(5)
 
     for t in threads:
         t.join()
@@ -282,98 +241,21 @@ def run_campaign_status():
     print_report(results)
 
 
-# ── Delete Completed Campaigns For One Emulator ───────────────────────
+# ── Delete Completed Campaigns (standalone) ───────────────────────────
 
-def delete_completed_for_emulator(udid, system_port, webdriver_url):
-    driver = None
+def delete_completed_for_emulator(udid):
+    """
+    Connect to a device, navigate to My Campaign, delete all completed slots.
+    Returns the number deleted.
+    """
     try:
         logger.log(f"[{udid}] → Connecting to delete completed campaigns...")
-        driver = webdriver.Remote(webdriver_url, options=build_options(udid, system_port))
+        _navigate_to_my_campaign(udid)
+        deleted = _delete_completed_slots(udid)
 
-        pkg = os.getenv("APP_PACKAGE")
-        driver.activate_app(pkg)
-        time.sleep(5)
-
-        wait = WebDriverWait(driver, 20)
-
-        # ── navigate to My Campaign ───────────────────────────────
-        my_campaign = wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
-        ))
-        my_campaign.click()
-        time.sleep(2)
-
-        deleted = 0
-
-        # ── probe all slots, re-checking after each delete ────────
-        # After deleting a slot the list shifts up, so always re-probe
-        # from slot [1] until no more completed slots are found.
-        for _pass in range(MAX_CAMPAIGNS):
-            found_completed = False
-
-            for index in range(1, MAX_CAMPAIGNS + 1):
-                # Check completion status for this slot
-                done_xpath = (
-                    f'(//android.widget.TextView'
-                    f'[@resource-id="com.view.ytrabbit:id/textView_done"])[{index}]'
-                )
-                time_xpath = (
-                    f'(//android.widget.TextView'
-                    f'[@resource-id="com.view.ytrabbit:id/textView_time"])[{index}]'
-                )
-
-                try:
-                    done_el = driver.find_element(AppiumBy.XPATH, done_xpath)
-                    done_text = done_el.text.strip()
-                except Exception:
-                    break  # slot doesn't exist → stop probing
-
-                # Completed = "complete:" followed by an actual timestamp
-                complete_time = ""
-                if "complete:" in done_text:
-                    complete_time = done_text.split("complete:", 1)[1].strip()
-
-                if not complete_time:
-                    # In-progress → skip this slot
-                    logger.log(f"[{udid}] → Slot [{index}] in-progress — skipping.")
-                    continue
-
-                # Completed → click textView_time to delete it
-                try:
-                    # ── click Watch Seconds to trigger delete dialog ──
-                    time_el = wait.until(EC.element_to_be_clickable(
-                        (AppiumBy.XPATH, time_xpath)
-                    ))
-                    time_el.click()
-
-                    # ── confirm deletion on the dialog (OK button) ──
-                    wait.until(EC.element_to_be_clickable(
-                        (AppiumBy.ID, "android:id/button1")
-                    )).click()
-                    logger.log(f"[{udid}] ✓ Slot [{index}] deleted "
-                               f"(completed at {complete_time}).")
-
-                    deleted += 1
-                    found_completed = True
-                    time.sleep(1)  # let the list update before re-probing
-                    break          # restart pass from slot [1] after list shifts
-
-                except Exception as click_err:
-                    logger.log(f"[{udid}] ⚠ Could not delete slot [{index}]: {click_err}")
-
-            if not found_completed:
-                break  # no more completed slots found in this pass
-
-        if deleted == 0:
-            logger.log(f"[{udid}] → No completed campaigns to delete.")
-        else:
-            logger.log(f"[{udid}] ✓ Deleted {deleted} completed campaign(s).")
-
-        # ── navigate back to main screen ─────────────────────────
+        # Navigate back
         try:
-            wait.until(EC.element_to_be_clickable(
-                (AppiumBy.ID, "com.view.ytrabbit:id/btn_backse")
-            )).click()
+            adb.click_by_id(udid, _RES_BTN_BACKSE, timeout=20)
             logger.log(f"[{udid}] ✓ Navigated back to main screen.")
         except Exception as back_err:
             logger.log(f"[{udid}] ⚠ Could not click back button: {back_err}")
@@ -383,74 +265,32 @@ def delete_completed_for_emulator(udid, system_port, webdriver_url):
     except Exception as e:
         logger.log(f"[{udid}] ✗ Delete error: {e}")
         return 0
-    finally:
-        if driver is not None:
-            try:
-                driver.quit()
-            except Exception:
-                pass
 
 
-# ── Delete Completed On Existing Driver (during-script flow) ──────────
+# ── Delete Completed Slots (shared core logic) ────────────────────────
 
-def delete_completed_on_driver(driver, udid):
+def _delete_completed_slots(udid):
     """
-    Delete all completed campaign slots using an already-connected driver.
-    The caller is responsible for ensuring the driver is idle (paused)
-    and that the app is open before calling this.
-
-    Navigation: btn_backs (main screen) → textView7 (My Campaign)
-    → delete completed slots.
-
-    Stays on the My Campaign screen after deletion so the caller can
-    proceed directly to slot check and adding without re-navigating.
-
-    Returns the number of slots deleted.
+    Probe all slots, re-checking after each delete (list shifts after deletion).
+    Stays on My Campaign screen when done.
+    Returns the number of deleted slots.
     """
-    wait = WebDriverWait(driver, 20)
-
-    # ── go to main screen first ──
-    logger.log(f"[{udid}] → Clicking Back to main screen...")
-    try:
-        wait.until(EC.element_to_be_clickable(
-            (AppiumBy.ID, "com.view.ytrabbit:id/btn_backs")
-        )).click()
-        logger.log(f"[{udid}] ✓ Main screen reached.")
-        time.sleep(2)
-    except Exception as e:
-        logger.log(f"[{udid}] ⚠ Could not click btn_backs: {e}")
-
-    # ── navigate to My Campaign ──
-    logger.log(f"[{udid}] → Opening My Campaign for delete check...")
-    wait.until(EC.element_to_be_clickable(
-        (AppiumBy.ID, "com.view.ytrabbit:id/textView7")
-    )).click()
-    time.sleep(2)
-
     deleted = 0
 
-    # ── probe all slots, re-checking after each delete ──
-    # After deleting a slot the list shifts up, so always re-probe
-    # from slot [1] until no more completed slots are found.
     for _pass in range(MAX_CAMPAIGNS):
         found_completed = False
 
+        # Re-dump after each delete since the list shifts
+        root = adb.dump_ui(udid)
+        if root is None:
+            break
+
         for index in range(1, MAX_CAMPAIGNS + 1):
-            done_xpath = (
-                f'(//android.widget.TextView'
-                f'[@resource-id="com.view.ytrabbit:id/textView_done"])[{index}]'
-            )
-            time_xpath = (
-                f'(//android.widget.TextView'
-                f'[@resource-id="com.view.ytrabbit:id/textView_time"])[{index}]'
-            )
+            done_el = adb.find_nth_element(root, _RES_DONE, index)
+            if done_el is None:
+                break  # slot doesn't exist
 
-            try:
-                done_el   = driver.find_element(AppiumBy.XPATH, done_xpath)
-                done_text = done_el.text.strip()
-            except Exception:
-                break  # slot doesn't exist → stop probing
-
+            done_text     = done_el.attrib.get("text", "").strip()
             complete_time = ""
             if "complete:" in done_text:
                 complete_time = done_text.split("complete:", 1)[1].strip()
@@ -461,14 +301,13 @@ def delete_completed_on_driver(driver, udid):
 
             # Completed → click textView_time to trigger delete dialog
             try:
-                time_el = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.XPATH, time_xpath)
-                ))
-                time_el.click()
+                time_el = adb.find_nth_element(root, _RES_TIME, index)
+                if time_el is None:
+                    continue
+                adb.tap_element(udid, time_el)
 
-                wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "android:id/button1")
-                )).click()
+                # Confirm deletion
+                adb.click_by_id(udid, _RES_OK_BTN, timeout=15)
                 logger.log(f"[{udid}] ✓ Slot [{index}] deleted "
                            f"(completed at {complete_time}).")
 
@@ -481,26 +320,48 @@ def delete_completed_on_driver(driver, udid):
                 logger.log(f"[{udid}] ⚠ Could not delete slot [{index}]: {click_err}")
 
         if not found_completed:
-            break  # no more completed slots in this pass
+            break
 
     if deleted == 0:
         logger.log(f"[{udid}] → No completed campaigns to delete.")
     else:
         logger.log(f"[{udid}] ✓ Deleted {deleted} completed campaign(s).")
 
-    # stays on My Campaign screen — caller proceeds directly to slot check
     return deleted
 
 
-# ── Main Entry For Delete ─────────────────────────────────────────────
+# ── Delete Completed On Running Device (during-script) ────────────────
+
+def delete_completed_on_device(udid):
+    """
+    Delete all completed campaign slots on a device that is currently idle
+    (paused by the campaign flow).  Navigates: btn_backs → textView7.
+
+    Returns the number of deleted slots.
+    Stays on My Campaign screen after deletion.
+    """
+    # Go to main screen first
+    logger.log(f"[{udid}] → Clicking Back to main screen...")
+    try:
+        adb.click_by_id(udid, _RES_BTN_BACKS, timeout=20)
+        logger.log(f"[{udid}] ✓ Main screen reached.")
+        time.sleep(2)
+    except Exception as e:
+        logger.log(f"[{udid}] ⚠ Could not click btn_backs: {e}")
+
+    # Navigate to My Campaign
+    logger.log(f"[{udid}] → Opening My Campaign for delete check...")
+    adb.click_by_id(udid, _RES_MY_CAMPAIGN, timeout=20)
+    time.sleep(2)
+
+    return _delete_completed_slots(udid)
+    # stays on My Campaign screen — caller proceeds to slot check
+
+
+# ── Main Entry for Delete ─────────────────────────────────────────────
 
 def run_delete_completed():
     load_dotenv()
-    webdriver_url = os.getenv("WEBDRIVER_URL")
-
-    if not webdriver_url:
-        print("✗ WEBDRIVER_URL not set in .env file.")
-        return
 
     emulators = grabber.get_emulator_list()
     if not emulators:
@@ -511,9 +372,8 @@ def run_delete_completed():
 
     grand_total = 0
 
-    # ── run emulator by emulator (sequential) ────────────────────
-    for udid, sys_port in emulators:
-        deleted = delete_completed_for_emulator(udid, sys_port, webdriver_url)
+    for udid, _ in emulators:
+        deleted = delete_completed_for_emulator(udid)
         grand_total += deleted
         print(f"  {'✓' if deleted > 0 else '→'} {udid}: {deleted} deleted")
 

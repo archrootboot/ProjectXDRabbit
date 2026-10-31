@@ -1,5 +1,4 @@
 import os
-import subprocess
 import threading
 import des_cap
 import tools.campaign as campaign
@@ -13,7 +12,6 @@ current_stop_events = {}
 current_drivers = {}
 current_pause_events = {}
 current_paused_ack_events = {}
-appium_process = None
 
 # ── Emulator Watcher state ────────────────────────────────────────────
 _watcher_thread: threading.Thread | None = None
@@ -25,22 +23,8 @@ _script_paused = False
 
 # ── Options ───────────────────────────────────────────────────────────
 
+
 def option_one():
-    global appium_process
-
-    if appium_process and appium_process.poll() is None:
-        print("⚠ Appium is already running.")
-        return
-
-    print("\nStarting Appium Core...")
-    result = start_appium_windows()
-    if result is None:
-        print("✗ Appium failed to start.")
-        return
-    appium_process = result
-
-
-def option_two():
     global current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events, _script_paused
 
     # ── if script is running, toggle pause / resume ───────────────────
@@ -75,7 +59,7 @@ def option_two():
     current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events = des_cap.main_pro()
 
 
-def option_three():
+def option_two():
     if not current_threads:
         print("✗ No script is running.")
         return
@@ -87,7 +71,7 @@ def option_three():
         print(f"  {icon} {udid} → {state}")
 
 
-def option_four():
+def option_three():
     global current_threads, current_stop_events, current_drivers, current_pause_events, current_paused_ack_events
 
     if not current_threads:
@@ -116,7 +100,7 @@ def option_four():
     print(f"✓ Added {len(new_threads)} new emulator(s): {list(new_threads.keys())}")
 
 
-def option_five():
+def option_four():
     if not current_stop_events:
         print("✗ No script is running.")
         return
@@ -127,7 +111,7 @@ def option_five():
     des_cap.stop_one(target, current_threads, current_stop_events, current_drivers)
 
 
-def option_six():
+def option_five():
     if not current_stop_events:
         print("✗ No script is running.")
         return
@@ -136,7 +120,7 @@ def option_six():
     des_cap.stop_all(current_threads, current_stop_events, current_drivers)
 
 
-def option_seven():
+def option_six():
     """Add Campaign During Script — uses existing drivers, no new connections."""
     if not current_threads:
         print("✗ No script is running. Start the script first (option 2).")
@@ -192,7 +176,7 @@ def option_seven():
     print("✓ Campaign setup started in background. Check logs for progress.")
 
 
-def option_eight():
+def option_seven():
     print("\n→ Add Campaign Setup")
 
     view_quantity  = input("Enter View Quantity: ").strip()
@@ -224,21 +208,21 @@ def option_eight():
     print(f"\n{message}")
 
 
-def option_nine():
+def option_eight():
     print("\n→ Fetching campaign status from all emulators...")
     campaign_status.run_campaign_status()
 
 
-def option_ten():
+def option_nine():
     print("→ Scanning for completed campaigns to delete...")
     campaign_status.run_delete_completed()
 
 
-def option_eleven():
+def option_ten():
     extract_thumbs.run_extract_thumbs()
 
 
-def option_twelve():
+def option_eleven():
     """Toggle the background emulator-watcher on or off."""
     global _watcher_thread, _watcher_stop_event
 
@@ -272,39 +256,6 @@ def option_twelve():
     print(f"✓ Emulator Monitor started — will auto-detect and launch new emulators every {interval}s.")
 
 
-def stop_appium():
-    global appium_process
-    if appium_process and appium_process.poll() is None:
-        try:
-            print("→ Stopping Appium Core...")
-            appium_process.kill()
-            appium_process.wait()
-            print("✓ Appium Core stopped.")
-        except Exception as e:
-            print(f"⚠ Error stopping Appium: {e}")
-        finally:
-            appium_process = None
-    else:
-        print("⚠ Appium is not running.")
-
-
-def start_appium_windows(port=4723):
-    try:
-        print(f"Launching Appium on port {port}...")
-        process = subprocess.Popen(
-            f"appium -p {port}",
-            shell=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        print(f"✓ Appium started on port {port} (PID: {process.pid})")
-        return process
-    except FileNotFoundError:
-        print("✗ Appium not found. Run: npm install -g appium")
-        return None
-    except Exception as e:
-        print(f"✗ Failed to start Appium: {e}")
-        return None
 
 
 # ── Menu ──────────────────────────────────────────────────────────────
@@ -324,22 +275,21 @@ def show_menu():
         else:
             script_label = "[inactive]"
 
-        print("\n 🤖  Appium CLI Controller")
-        print("1.  Start Appium Core")
-        print(f"2.  Run Script            {script_label}")
-        print("3.  Check Status")
-        print("4.  Add New Emulators")
-        print("5.  Stop Specific Emulator")
-        print("6.  Stop All Emulators")
-        print("7.  Add Campaign During Script")
-        print("8.  Add Campaign")
-        print("9.  Campaign Status")
-        print("10. Delete Complete Campaigns")
-        print("11. Extract Thumbnails")
-        print(f"12. Emulator Monitor  {monitor_label}")
-        print("13. Exit")
+        print("\n 🤖  ADB Controller")
+        print(f"1.  Run Script            {script_label}")
+        print("2.  Check Status")
+        print("3.  Add New Emulators")
+        print("4.  Stop Specific Emulator")
+        print("5.  Stop All Emulators")
+        print("6.  Add Campaign During Script")
+        print("7.  Add Campaign")
+        print("8.  Campaign Status")
+        print("9.  Delete Complete Campaigns")
+        print("10. Extract Thumbnails")
+        print(f"11. Emulator Monitor  {monitor_label}")
+        print("12. Exit")
 
-        choice = input("Enter your choice (1-13): ").strip()
+        choice = input("Enter your choice (1-12): ").strip()
 
         if choice == "1":
             option_one()
@@ -364,8 +314,6 @@ def show_menu():
         elif choice == "11":
             option_eleven()
         elif choice == "12":
-            option_twelve()
-        elif choice == "13":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
@@ -380,11 +328,10 @@ def show_menu():
             else:
                 if _watcher_thread and _watcher_thread.is_alive():
                     emulator_watcher.stop_watcher(_watcher_thread, _watcher_stop_event)
-            stop_appium()
             print("Exiting program. Goodbye!")
             break
         else:
-            print("Invalid selection. Please try again (1-13).")
+            print("Invalid selection. Please try again (1-12).")
 
 
 if __name__ == "__main__":

@@ -1,15 +1,32 @@
 import os
 import time
-from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import logger
 import tools.yt_links_get as yt_links_get
-import tools.appium_manager as appium_manager
+import tools.adb_controller as adb
+
+# Resource IDs used by the ytrabbit app
+_RES_TIME   = "com.view.ytrabbit:id/textView_time"
+_RES_POINTS = "com.view.ytrabbit:id/textView_points"
+_RES_IMG    = "com.view.ytrabbit:id/imageView_img2"
+_RES_SKIP   = "com.view.ytrabbit:id/textView_chage"
+_RES_WATCH  = "com.view.ytrabbit:id/textView4df"
 
 
-def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, play_lock=None):
-    wait = WebDriverWait(driver, 15)
+def watch_video(udid, stop_event, pause_event=None, paused_ack=None, play_lock=None):
+    """
+    Main watch loop — pure ADB version.
+
+    Replaces the Appium-based watch_video().  No driver/WebDriver argument;
+    all interaction goes through adb_controller using the device udid.
+
+    Parameters
+    ----------
+    udid          : device serial (e.g. 'emulator-5554' or '127.0.0.1:21503')
+    stop_event    : threading.Event — set to stop the loop
+    pause_event   : threading.Event — set by campaign code to pause between videos
+    paused_ack    : threading.Event — this function sets it when truly idle
+    play_lock     : threading.Lock  — shared across threads; held during play-click
+    """
     consecutive_skips  = 0
     consecutive_errors = 0
     max_skips          = int(os.getenv("MAX_SKIPS", "10").strip())
@@ -23,13 +40,13 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
     # ── load watch time filter from .env ──────────────────────────────
     watch_time_raw = os.getenv("WATCH_TIME_VALUES", "").strip()
 
-    # ── point not updated error tracking (per emulator) ───────────────
-    max_point_errors     = int(os.getenv("MAX_POINT_ERRORS", "10").strip())
-    max_point_error_time = int(os.getenv("MAX_POINT_ERROR_TIME", "1800").strip())
+    # ── point not updated error tracking ─────────────────────────────
+    max_point_errors      = int(os.getenv("MAX_POINT_ERRORS", "10").strip())
+    max_point_error_time  = int(os.getenv("MAX_POINT_ERROR_TIME", "1800").strip())
     point_not_updated_count = 0
     point_error_start_time  = None
 
-    # ── thread-lock state (acquired before play, released at video start) ──
+    # ── thread-lock state ─────────────────────────────────────────────
     lock_held = False
 
 
@@ -39,10 +56,10 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
         nonlocal point_not_updated_count, point_error_start_time
 
         try:
-            point_element = wait.until(EC.presence_of_element_located(
-                (AppiumBy.ID, "com.view.ytrabbit:id/textView_points")
-            ))
-            point_value = point_element.text
+            point_value = adb.get_text_by_id(udid, _RES_POINTS, timeout=15)
+            if point_value is None:
+                logger.red(f"[{udid}] ⚠ point_check: could not read points element.")
+                return None
 
             if point_value != old_point_value:
                 logger.green(f"[{udid}] Points updated: {point_value}")
@@ -56,13 +73,17 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
 
                 elapsed_time = int(time.time() - point_error_start_time)
 
-                logger.red(f"[{udid}] Points not updated. "
-                           f"(count: {point_not_updated_count}/{max_point_errors} | "
-                           f"time: {elapsed_time}s/{max_point_error_time}s)")
+                logger.red(
+                    f"[{udid}] Points not updated. "
+                    f"(count: {point_not_updated_count}/{max_point_errors} | "
+                    f"time: {elapsed_time}s/{max_point_error_time}s)"
+                )
 
                 if point_not_updated_count >= max_point_errors and elapsed_time <= max_point_error_time:
-                    logger.red(f"[{udid}] ⚠ {point_not_updated_count} point errors in "
-                               f"{elapsed_time}s → restarting app...")
+                    logger.red(
+                        f"[{udid}] ⚠ {point_not_updated_count} point errors in "
+                        f"{elapsed_time}s → restarting app..."
+                    )
                     point_not_updated_count = 0
                     point_error_start_time  = None
                     restart_app()
@@ -82,65 +103,34 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
     # ── Restart App ───────────────────────────────────────────────────
 
     def restart_app():
-        pkg = os.getenv("APP_PACKAGE")
+        pkg      = os.getenv("APP_PACKAGE")
+        activity = os.getenv("APP_MAIN_ACTIVITY")
         logger.log(f"[{udid}] ⚠ Bug detected! Restarting app...")
 
-        # ── if Appium itself is down, revive it before attempting any commands ──
-        appium_port = int(os.getenv("APPIUM_PORT", "4723"))
-        appium_timeout = int(os.getenv("APPIUM_START_TIMEOUT", "30"))
-
         try:
-            driver.terminate_app(pkg)
+            adb.stop_app(udid, pkg)
         except Exception as e:
-            logger.log(f"[{udid}] ⚠ terminate_app failed: {e}")
-            if appium_manager.is_appium_connection_error(e):
-                logger.log(f"[{udid}] ⚠ Appium connection lost — attempting to revive Appium...")
-                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
-                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
-                    return False
-                logger.log(f"[{udid}] ✓ Appium revived. Retrying terminate_app...")
-                try:
-                    driver.terminate_app(pkg)
-                except Exception:
-                    pass  # best-effort; continue to activate
+            logger.log(f"[{udid}] ⚠ stop_app failed: {e}")
 
         time.sleep(3)
 
         try:
-            driver.activate_app(pkg)
+            adb.start_app(udid, pkg, activity)
         except Exception as e:
-            logger.log(f"[{udid}] ⚠ activate_app failed: {e}")
-            if appium_manager.is_appium_connection_error(e):
-                logger.log(f"[{udid}] ⚠ Appium connection lost during activate — attempting to revive Appium...")
-                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
-                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
-                    return False
-                logger.log(f"[{udid}] ✓ Appium revived. Retrying activate_app...")
-                try:
-                    driver.activate_app(pkg)
-                except Exception as retry_e:
-                    logger.log(f"[{udid}] ✗ activate_app failed after Appium revival: {retry_e}")
-                    return False
-            else:
-                return False
+            logger.log(f"[{udid}] ⚠ start_app failed: {e}")
+            return False
 
         time.sleep(5)
 
-        # ── use a longer timeout for the post-restart click ──
-        # 10+ emulators means the machine is under load — 45s gives enough headroom
-        restart_wait = WebDriverWait(driver, 45)
-
+        # Click the watch button to re-enter the watch screen
         for attempt in range(5):
-            try:
-                element = restart_wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/textView4df")
-                ))
-                element.click()
+            el = adb.wait_for_element(udid, timeout=45, resource_id=_RES_WATCH)
+            if el is not None:
+                adb.tap_element(udid, el)
                 logger.log(f"[{udid}] ✓ App restarted successfully (attempt {attempt + 1}).")
                 return True
-            except Exception as e:
-                logger.log(f"[{udid}] ⚠ Element click after restart attempt {attempt + 1}/5 failed: {e}")
-                time.sleep(5)
+            logger.log(f"[{udid}] ⚠ Element click after restart attempt {attempt + 1}/5 failed.")
+            time.sleep(5)
 
         logger.log(f"[{udid}] ✗ Failed to click element after restart — all 5 attempts exhausted.")
         return False
@@ -156,21 +146,13 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
                 return duration > 0
 
             if watch_time_raw.startswith("<="):
-                threshold = int(watch_time_raw[2:].strip())
-                return duration <= threshold
-
+                return duration <= int(watch_time_raw[2:].strip())
             elif watch_time_raw.startswith(">="):
-                threshold = int(watch_time_raw[2:].strip())
-                return duration >= threshold
-
+                return duration >= int(watch_time_raw[2:].strip())
             elif watch_time_raw.startswith("<"):
-                threshold = int(watch_time_raw[1:].strip())
-                return duration < threshold
-
+                return duration < int(watch_time_raw[1:].strip())
             elif watch_time_raw.startswith(">"):
-                threshold = int(watch_time_raw[1:].strip())
-                return duration > threshold
-
+                return duration > int(watch_time_raw[1:].strip())
             else:
                 targets = set(
                     int(v.strip()) for v in watch_time_raw.split(",") if v.strip().isdigit()
@@ -188,7 +170,7 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
         total_wait = duration + buffer_time
         elapsed    = 0
 
-        # ── release play lock now that the video is about to start ──────
+        # Release play lock now that the video is about to start
         if play_lock is not None and lock_held:
             play_lock.release()
             lock_held = False
@@ -197,11 +179,11 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
         logger.log(f"[{udid}] ▶ Video started. Waiting {total_wait}s ({duration}s + {buffer_time}s buffer)...")
 
         while not stop_event.is_set() and elapsed < total_wait:
-            # ── honour a pause request mid-video ──────────────────────
+            # Honour a pause request mid-video
             if pause_event and pause_event.is_set():
                 logger.log(f"[{udid}] ⏸ Pause requested via menu.")
                 if paused_ack:
-                    paused_ack.set()  # tell campaign/menu side: driver is idle
+                    paused_ack.set()
                 while pause_event.is_set() and not stop_event.is_set():
                     time.sleep(1)
                 if paused_ack:
@@ -214,10 +196,10 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
             elapsed += check_interval
             logger.log(f"[{udid}] ⏱ Waiting... ({elapsed}s/{total_wait}s)")
 
-            try:
-                driver.current_activity
-            except Exception as e:
-                logger.log(f"[{udid}] ⚠ Session lost during video wait: {e}")
+            # Liveness check via ADB
+            act = adb.current_activity(udid)
+            if act is None:
+                logger.log(f"[{udid}] ⚠ Session lost during video wait.")
                 return "session_lost"
 
         if stop_event.is_set():
@@ -228,21 +210,17 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
 
 
     # ── Pause Gate ────────────────────────────────────────────────────
-    # Called only at safe idle points (after point_check, after a skip).
-    # Never interrupts a video in progress.
 
     def pause_gate():
-        """Block here if a campaign setup is waiting. Safe to call only
-        between videos — never while a video is counting down.
-        Sets paused_ack so the campaign thread knows the driver is free."""
+        """Block at a safe idle point while campaign setup runs."""
         if pause_event and pause_event.is_set():
-            logger.log(f"[{udid}] ⏸ Paused for campaign setup — waiting for it to finish...")
+            logger.log(f"[{udid}] ⏸ Paused for campaign setup — waiting...")
             if paused_ack:
-                paused_ack.set()    # tell campaign side: driver is idle now
+                paused_ack.set()
             while pause_event.is_set() and not stop_event.is_set():
                 time.sleep(1)
             if paused_ack:
-                paused_ack.clear()  # reset for next use
+                paused_ack.clear()
             if not stop_event.is_set():
                 logger.log(f"[{udid}] ▶ Resumed main script after campaign setup.")
 
@@ -251,63 +229,66 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
 
     while not stop_event.is_set():
         try:
-            time_element = wait.until(EC.presence_of_element_located(
-                (AppiumBy.ID, "com.view.ytrabbit:id/textView_time")
-            ))
-            time_value = time_element.text.strip()
+            # Read the current video duration from the UI
+            time_value = adb.get_text_by_id(udid, _RES_TIME, timeout=15)
+            if time_value is None:
+                consecutive_errors += 1
+                logger.log(f"[{udid}] ⚠ Could not read time element. Error {consecutive_errors}/{max_errors}.")
+                time.sleep(5)
+                if consecutive_errors >= max_errors:
+                    consecutive_errors = 0
+                    if not restart_app():
+                        break
+                continue
 
             if is_valid_duration(time_value):
-                point_element = wait.until(EC.presence_of_element_located(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/textView_points")
-                ))
-                old_point_value = point_element.text
-
+                old_point_value = adb.get_text_by_id(udid, _RES_POINTS, timeout=10) or ""
                 duration = int(time_value)
                 consecutive_skips = 0
 
-                # ── locate play button (needed for click_fn lambda) ───
-                image_element = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/imageView_img2")
-                ))
+                # Locate play button element for bounds
+                img_el = adb.wait_for_element(udid, timeout=30, resource_id=_RES_IMG)
                 time.sleep(1)
 
-                # ── acquire play lock before thumbnail check + play click ──
+                # Acquire play lock before thumbnail check + play click
                 if play_lock is not None and not lock_held:
                     logger.log(f"[{udid}] 🔒 Waiting for play lock...")
                     play_lock.acquire()
                     lock_held = True
                     logger.log(f"[{udid}] 🔒 Play lock acquired.")
 
-                # ── check thumbnail and click (or skip) ──────────────
+                # Check thumbnail then click (or skip)
+                def _click_play():
+                    if img_el is not None:
+                        adb.tap_element(udid, img_el)
+                    else:
+                        # Fallback: find it fresh
+                        adb.click_by_id(udid, _RES_IMG, timeout=10)
+
                 yt_result = yt_links_get.check_and_play(
-                    driver      = driver,
                     udid        = udid,
                     skip_hashes = skip_hashes,
-                    click_fn    = lambda: image_element.click()
+                    click_fn    = _click_play,
+                    # pass the element for cropped screenshot
+                    thumb_el    = img_el,
                 )
 
                 if yt_result == "skip":
-                    # thumbnail matched skip list — use app's skip button
                     logger.log(f"[{udid}] ⏭ Video skipped. Loading next...")
-                    skip_button = wait.until(EC.element_to_be_clickable(
-                        (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
-                    ))
-                    skip_button.click()
+                    adb.click_by_id(udid, _RES_SKIP, timeout=15)
                     time.sleep(2)
-                    # ── safe idle point: between videos ──
                     pause_gate()
                     continue
-                # ─────────────────────────────────────────────────────
-                # yt_result == "play" or "unknown" → wait for video end
 
+                # yt_result == "play" or "unknown" → wait for video end
                 result = wait_for_video(duration)
 
                 if result == "done":
-                    driver.tap([(13, 943)], 100)
+                    # Tap back (same coordinate as original code)
+                    adb.tap(udid, 13, 943)
                     logger.log(f"[{udid}] ✓ Tapped back.")
                     point_check(old_point_value)
                     consecutive_errors = 0
-                    # ── safe idle point: video done, points recorded ──
                     pause_gate()
 
                 elif result == "stopped":
@@ -329,35 +310,19 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
                         time.sleep(10)
                     continue
 
-                skip_button = wait.until(EC.element_to_be_clickable(
-                    (AppiumBy.ID, "com.view.ytrabbit:id/textView_chage")
-                ))
-                skip_button.click()
+                adb.click_by_id(udid, _RES_SKIP, timeout=15)
                 time.sleep(2)
-                # ── safe idle point: duration skipped, between videos ──
                 pause_gate()
 
         except Exception as e:
-            # ── safety: release lock if it was held when exception occurred ──
+            # Safety: release lock if held when exception occurred
             if play_lock is not None and lock_held:
                 play_lock.release()
                 lock_held = False
                 logger.log(f"[{udid}] 🔓 Play lock released (exception path).")
+
             consecutive_errors += 1
             logger.log(f"[{udid}] Error ({consecutive_errors}/{max_errors}): {e}, retrying in 5s...")
-
-            # ── if Appium is down, revive it immediately before the retry delay ──
-            if appium_manager.is_appium_connection_error(e):
-                appium_port = int(os.getenv("APPIUM_PORT", "4723"))
-                appium_timeout = int(os.getenv("APPIUM_START_TIMEOUT", "30"))
-                logger.log(f"[{udid}] ⚠ Appium connection error detected — attempting to revive Appium...")
-                if not appium_manager.ensure_appium_running(port=appium_port, max_wait=appium_timeout):
-                    logger.log(f"[{udid}] ✗ Appium could not be restarted. Stopping thread.")
-                    break
-                logger.log(f"[{udid}] ✓ Appium revived. Resetting error counter and retrying...")
-                consecutive_errors = 0
-                continue
-
             time.sleep(5)
 
             if consecutive_errors >= max_errors:
