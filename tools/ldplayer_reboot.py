@@ -82,14 +82,26 @@ def _get_instance_count() -> int:
 
 # ── ADB ↔ LDPlayer name mapping ───────────────────────────────────────────────
 
+def _extract_port_from_udid(udid: str) -> int:
+    """
+    Extract the numeric port from an ADB device UDID.
+      'emulator-5554'    → 5554
+      '127.0.0.1:5555'   → 5555
+      anything else      → -1
+    """
+    import re as _re
+    m = _re.search(r':(\d+)$', udid) or _re.search(r'-(\d+)$', udid)
+    return int(m.group(1)) if m else -1
+
+
 def _get_ldplayer_list(ldconsole: str) -> list[dict]:
     """
     Run `ldconsole list2` and return a list of dicts:
-        { 'index': int, 'name': str, 'adb_port': int }
+        { 'index': int, 'name': str }
 
-    ldconsole list2 output columns (comma-separated):
-        index, name, top-window-handle, bind-window-handle,
-        android-started-int, pid, pid2, adb-port
+    ldconsole list2 columns (comma-separated):
+        index, name, hwnd1, hwnd2, android-started, pid, pid2, width, height, dpi
+        (ADB port is NOT in list2 output — derived via formula instead)
     """
     try:
         result = subprocess.run(
@@ -98,16 +110,21 @@ def _get_ldplayer_list(ldconsole: str) -> list[dict]:
             text=True,
             timeout=15,
         )
+        raw = result.stdout.strip()
+        if raw:
+            logger.log(f"[LDReboot] 🔍 ldconsole list2:\n{raw}")
+        else:
+            logger.log("[LDReboot] ⚠ ldconsole list2 returned empty output.")
+
         entries = []
-        for line in result.stdout.strip().splitlines():
+        for line in raw.splitlines():
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 8:
+            if len(parts) < 2:
                 continue
             try:
-                index    = int(parts[0])
-                name     = parts[1]
-                adb_port = int(parts[7]) if parts[7].isdigit() else -1
-                entries.append({"index": index, "name": name, "adb_port": adb_port})
+                index = int(parts[0])
+                name  = parts[1]
+                entries.append({"index": index, "name": name})
             except (ValueError, IndexError):
                 continue
         return entries
@@ -122,32 +139,44 @@ def _get_ldplayer_list(ldconsole: str) -> list[dict]:
         return []
 
 
+def _ld_index_to_adb_udid(index: int) -> tuple[str, str]:
+    """
+    Convert a LDPlayer instance index to its ADB device names.
+
+    LDPlayer assigns ADB ports by formula:  port = 5554 + (index × 2)
+      index 0 → port 5554 → 'emulator-5554'
+      index 1 → port 5556 → 'emulator-5556'
+      index 2 → port 5558 → 'emulator-5558'
+
+    Returns both the standard emulator style and TCP/IP style:
+        ('emulator-5554', '127.0.0.1:5554')
+    """
+    port = 5554 + index * 2
+    return f"emulator-{port}", f"127.0.0.1:{port}"
+
+
 def _build_adb_to_ld_map(ldconsole: str) -> dict[str, dict]:
     """
     Build a mapping of ADB device name → LDPlayer info.
 
-    ADB reports emulators as 'emulator-<port>' where port == adb_port from
-    ldconsole list2.  For TCP/IP style devices (e.g. '127.0.0.1:5556') the
-    port number is extracted directly.
+    Uses the standard LDPlayer ADB port formula (5554 + index×2) since
+    ldconsole list2 does not expose the ADB port directly.
 
     Returns:
         {
-            'emulator-5556': { 'index': 0, 'name': 'LDPlayer-0', 'adb_port': 5556 },
+            'emulator-5554': { 'index': 0, 'name': 'LDPlayer-0' },
+            '127.0.0.1:5554': { 'index': 0, 'name': 'LDPlayer-0' },
+            'emulator-5556': { 'index': 1, 'name': 'LDPlayer-1' },
             ...
         }
     """
     ld_list = _get_ldplayer_list(ldconsole)
-    mapping = {}
+    mapping: dict[str, dict] = {}
     for entry in ld_list:
-        port = entry["adb_port"]
-        if port <= 0:
-            continue
-        # Standard ADB emulator device name  → emulator-<adb_port>
-        adb_key = f"emulator-{port}"
-        mapping[adb_key] = entry
-        # Also cover TCP/IP style (127.0.0.1:<port>)
-        tcp_key = f"127.0.0.1:{port}"
+        emu_key, tcp_key = _ld_index_to_adb_udid(entry["index"])
+        mapping[emu_key] = entry
         mapping[tcp_key] = entry
+    logger.log(f"[LDReboot] 🔍 ADB→LD map: { {k: v['name'] for k, v in mapping.items()} }")
     return mapping
 
 
@@ -210,22 +239,7 @@ def run_reboot_cycle(
     count = _get_instance_count()
     logger.log(f"[LDReboot] 🔄 Starting reboot cycle — rebooting {count} instance(s)...")
 
-    # ── Debug: show currently tracked ADB UDIDs ───────────────────────
-    tracked = list(threads.keys())
-    logger.log(f"[LDReboot] 🔍 Tracked ADB devices: {tracked}")
-
-    # ── Debug: show raw ldconsole list2 output ────────────────────────
-    try:
-        raw = subprocess.run(
-            [ldconsole, "list2"],
-            capture_output=True, text=True, timeout=15,
-        )
-        logger.log(f"[LDReboot] 🔍 ldconsole list2 raw:\n{raw.stdout.strip()}")
-    except Exception as dbg_e:
-        logger.log(f"[LDReboot] ✗ Debug ldconsole call failed: {dbg_e}")
-
     adb_map = _build_adb_to_ld_map(ldconsole)
-    logger.log(f"[LDReboot] 🔍 ADB→LD map keys: {list(adb_map.keys())}")
 
     if not adb_map:
         logger.log("[LDReboot] ✗ Could not retrieve LDPlayer instance list. Skipping cycle.")
