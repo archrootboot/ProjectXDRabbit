@@ -210,7 +210,23 @@ def run_reboot_cycle(
     count = _get_instance_count()
     logger.log(f"[LDReboot] 🔄 Starting reboot cycle — rebooting {count} instance(s)...")
 
+    # ── Debug: show currently tracked ADB UDIDs ───────────────────────
+    tracked = list(threads.keys())
+    logger.log(f"[LDReboot] 🔍 Tracked ADB devices: {tracked}")
+
+    # ── Debug: show raw ldconsole list2 output ────────────────────────
+    try:
+        raw = subprocess.run(
+            [ldconsole, "list2"],
+            capture_output=True, text=True, timeout=15,
+        )
+        logger.log(f"[LDReboot] 🔍 ldconsole list2 raw:\n{raw.stdout.strip()}")
+    except Exception as dbg_e:
+        logger.log(f"[LDReboot] ✗ Debug ldconsole call failed: {dbg_e}")
+
     adb_map = _build_adb_to_ld_map(ldconsole)
+    logger.log(f"[LDReboot] 🔍 ADB→LD map keys: {list(adb_map.keys())}")
+
     if not adb_map:
         logger.log("[LDReboot] ✗ Could not retrieve LDPlayer instance list. Skipping cycle.")
         return
@@ -272,7 +288,7 @@ def _scheduler_loop(
     scheduler_stop_event: threading.Event,
 ) -> None:
     """
-    Background loop that fires run_reboot_cycle() every REBOOT_INTERVAL_HOURS.
+    Background loop that fires run_reboot_cycle() every REBOOT_INTERVAL_SECONDS.
     Sleeps in 1-second ticks to honour the stop signal promptly.
     """
     interval = _get_interval_seconds()
