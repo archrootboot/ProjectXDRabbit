@@ -12,11 +12,14 @@ LDPLAYER_PATH          Path to ldconsole.exe
 REBOOT_INTERVAL_SECONDS  How many seconds between each reboot cycle.
                          e.g. 14400  → reboot cycle runs every 4 hours
 
-REBOOT_INSTANCE_COUNT  How many LDPlayer instances to reboot at the same time
-                       (batch size). In each cycle, ALL running emulators are
-                       rebooted in order.
-                       e.g. 1  → reboot emulators one by one
-                       e.g. 2  → reboot 2 emulators at a time
+REBOOT_INSTANCE_COUNT             How many LDPlayer instances to reboot at the same time
+                                  (batch size). In each cycle, ALL running emulators are
+                                  rebooted in order.
+                                  e.g. 1  → reboot emulators one by one
+                                  e.g. 2  → reboot 2 emulators at a time
+
+REBOOT_INSTANCE_INTERVAL_SECONDS  Time interval (seconds) to wait between rebooting
+                                  each instance/batch. Default: 5 seconds.
 
 Public API
 ──────────
@@ -41,6 +44,7 @@ import logger
 
 _DEFAULT_INTERVAL_SECONDS = 14400  # 4 hours
 _DEFAULT_INSTANCE_COUNT = 1
+_DEFAULT_INSTANCE_INTERVAL_SECONDS = 5
 
 
 # ── ldconsole helpers ─────────────────────────────────────────────────────────
@@ -80,6 +84,22 @@ def _get_instance_count() -> int:
             f"Using default {_DEFAULT_INSTANCE_COUNT}."
         )
     return _DEFAULT_INSTANCE_COUNT
+
+
+def _get_instance_interval_seconds() -> int:
+    """Return delay in seconds between rebooting emulator instances from .env."""
+    raw = (
+        os.getenv("REBOOT_INSTANCE_INTERVAL_SECONDS", "").strip()
+        or os.getenv("REBOOT_INSTANCE_DELAY_SECONDS", "").strip()
+    )
+    if raw.isdigit():
+        return max(0, int(raw))
+    if raw:
+        logger.log(
+            f"[LDReboot] ⚠ REBOOT_INSTANCE_INTERVAL_SECONDS='{raw}' is not a valid integer. "
+            f"Using default {_DEFAULT_INSTANCE_INTERVAL_SECONDS}s."
+        )
+    return _DEFAULT_INSTANCE_INTERVAL_SECONDS
 
 
 # ── ADB ↔ LDPlayer name mapping ───────────────────────────────────────────────
@@ -305,12 +325,15 @@ def run_reboot_cycle(
                 "emulator watcher will reconnect once it comes back online."
             )
 
-        # Brief pause between batches if more instances remain
+        # Pause between batches/instances if more instances remain
         if i + batch_size < total_candidates:
-            for _ in range(5):
-                if scheduler_stop_event and scheduler_stop_event.is_set():
-                    break
-                time.sleep(1)
+            delay = _get_instance_interval_seconds()
+            if delay > 0:
+                logger.log(f"[LDReboot] ⏳ Waiting {delay}s before next instance(s)...")
+                for _ in range(delay):
+                    if scheduler_stop_event and scheduler_stop_event.is_set():
+                        break
+                    time.sleep(1)
 
     logger.log("[LDReboot] ✅ Reboot cycle complete.")
 

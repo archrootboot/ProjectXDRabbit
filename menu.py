@@ -296,14 +296,16 @@ def option_thirteen():
         return
 
     import os
-    interval_h = os.getenv("REBOOT_INTERVAL_SECONDS", "14400").strip()
+    interval_s = os.getenv("REBOOT_INTERVAL_SECONDS", "14400").strip()
     count      = os.getenv("REBOOT_INSTANCE_COUNT", "1").strip()
+    inst_delay = os.getenv("REBOOT_INSTANCE_INTERVAL_SECONDS", "5").strip()
     ldpath     = os.getenv("LDPLAYER_PATH", "(not set)").strip()
 
     print(f"\n→ Starting LDPlayer Reboot Scheduler")
     print(f"   ldconsole : {ldpath}")
-    print(f"   Interval  : every {interval_h}s")
+    print(f"   Cycle     : every {interval_s}s")
     print(f"   Per cycle : reboot all emulators ({count} at a time)")
+    print(f"   Delay     : {inst_delay}s between reboot instance(s)")
 
     _reboot_stop_event = threading.Event()
     _reboot_thread = ldplayer_reboot.start_reboot_scheduler(
