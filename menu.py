@@ -303,7 +303,7 @@ def option_thirteen():
     print(f"\n→ Starting LDPlayer Reboot Scheduler")
     print(f"   ldconsole : {ldpath}")
     print(f"   Interval  : every {interval_h}s")
-    print(f"   Per cycle : reboot {count} instance(s) in ascending order")
+    print(f"   Per cycle : reboot all emulators ({count} at a time)")
 
     _reboot_stop_event = threading.Event()
     _reboot_thread = ldplayer_reboot.start_reboot_scheduler(

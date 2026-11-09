@@ -12,9 +12,11 @@ LDPLAYER_PATH          Path to ldconsole.exe
 REBOOT_INTERVAL_SECONDS  How many seconds between each reboot cycle.
                          e.g. 14400  → reboot cycle runs every 4 hours
 
-REBOOT_INSTANCE_COUNT  How many LDPlayer instances to reboot per cycle,
-                       taken in order (index 0, 1, 2 …).
-                       e.g. 2  → reboot LDPlayer-0 then LDPlayer-1 each cycle
+REBOOT_INSTANCE_COUNT  How many LDPlayer instances to reboot at the same time
+                       (batch size). In each cycle, ALL running emulators are
+                       rebooted in order.
+                       e.g. 1  → reboot emulators one by one
+                       e.g. 2  → reboot 2 emulators at a time
 
 Public API
 ──────────
@@ -222,13 +224,15 @@ def run_reboot_cycle(
     drivers: dict,
     pause_events: dict,
     paused_ack_events: dict,
+    scheduler_stop_event: threading.Event | None = None,
 ) -> None:
     """
     Execute one reboot cycle:
       1. Build ADB ↔ LDPlayer map.
-      2. Pick REBOOT_INSTANCE_COUNT instances in ascending index order.
-      3. For each: stop the Appium thread → reboot via ldconsole.
-         (The emulator watcher will auto-reconnect once the emulator is back.)
+      2. Find ALL running emulators mapped to LDPlayer instances.
+      3. Reboot all instances in ascending index order in batches of
+         REBOOT_INSTANCE_COUNT at a time (e.g. 1 by 1 when count is 1).
+         (The emulator watcher will auto-reconnect once each emulator is back.)
     """
     try:
         ldconsole = _get_ldconsole_path()
@@ -236,19 +240,17 @@ def run_reboot_cycle(
         logger.log(f"[LDReboot] ✗ {e}")
         return
 
-    count = _get_instance_count()
-    logger.log(f"[LDReboot] 🔄 Starting reboot cycle — rebooting {count} instance(s)...")
-
     adb_map = _build_adb_to_ld_map(ldconsole)
 
     if not adb_map:
         logger.log("[LDReboot] ✗ Could not retrieve LDPlayer instance list. Skipping cycle.")
         return
 
-    # Build ordered list: only ADB devices that are currently tracked, sorted by LD index
+    # Build ordered list: all ADB devices that are currently tracked, sorted by LD index
     candidates = []
     for udid in list(threads.keys()):
-        if udid in adb_map:
+        t = threads.get(udid)
+        if udid in adb_map and (t is None or t.is_alive()):
             ld_info = adb_map[udid]
             candidates.append((udid, ld_info))
     # Sort by LDPlayer index (ascending) so reboot order matches instance numbering
@@ -258,35 +260,57 @@ def run_reboot_cycle(
         logger.log("[LDReboot] ⚠ No running emulators could be mapped to LDPlayer instances.")
         return
 
-    targets = candidates[:count]
+    batch_size = _get_instance_count()
+    total_candidates = len(candidates)
     logger.log(
-        f"[LDReboot] → Reboot targets: "
-        + ", ".join(f"{udid} → {info['name']}" for udid, info in targets)
+        f"[LDReboot] 🔄 Starting reboot cycle — rebooting all {total_candidates} instance(s) "
+        f"({batch_size} at a time)..."
     )
 
-    for udid, ld_info in targets:
-        ld_name  = ld_info["name"]
-        ld_index = ld_info["index"]
+    logger.log(
+        f"[LDReboot] → Reboot order: "
+        + ", ".join(f"{udid} → {info['name']}" for udid, info in candidates)
+    )
 
-        # ── 1. Stop the Appium thread for this emulator ───────────────────
-        logger.log(f"[LDReboot] → Stopping Appium thread for {udid} ({ld_name})...")
-        import des_cap  # noqa: PLC0415 — lazy import to avoid circular dependency
-        des_cap.stop_one(udid, threads, stop_events, drivers)
+    import des_cap  # noqa: PLC0415 — lazy import to avoid circular dependency
 
-        # ── 2. Remove from tracking dicts so watcher treats it as "new" ──
-        for d in (threads, stop_events, drivers, pause_events, paused_ack_events):
-            d.pop(udid, None)
+    for i in range(0, total_candidates, batch_size):
+        if scheduler_stop_event and scheduler_stop_event.is_set():
+            logger.log("[LDReboot] ⚠ Reboot cycle interrupted by stop signal.")
+            return
 
-        # ── 3. Reboot via ldconsole ───────────────────────────────────────
-        _reboot_instance(ldconsole, ld_index, ld_name)
-
+        batch = candidates[i : i + batch_size]
         logger.log(
-            f"[LDReboot] ✓ {ld_name} rebooted — "
-            "emulator watcher will reconnect once it comes back online."
+            f"[LDReboot] → Rebooting batch {i // batch_size + 1}: "
+            + ", ".join(f"{udid} ({info['name']})" for udid, info in batch)
         )
 
-        # Brief pause between instances to avoid overloading the host
-        time.sleep(5)
+        for udid, ld_info in batch:
+            ld_name = ld_info["name"]
+            ld_index = ld_info["index"]
+
+            # ── 1. Stop the Appium thread for this emulator ───────────────────
+            logger.log(f"[LDReboot] → Stopping Appium thread for {udid} ({ld_name})...")
+            des_cap.stop_one(udid, threads, stop_events, drivers)
+
+            # ── 2. Remove from tracking dicts so watcher treats it as "new" ──
+            for d in (threads, stop_events, drivers, pause_events, paused_ack_events):
+                d.pop(udid, None)
+
+            # ── 3. Reboot via ldconsole ───────────────────────────────────────
+            _reboot_instance(ldconsole, ld_index, ld_name)
+
+            logger.log(
+                f"[LDReboot] ✓ {ld_name} reboot command sent — "
+                "emulator watcher will reconnect once it comes back online."
+            )
+
+        # Brief pause between batches if more instances remain
+        if i + batch_size < total_candidates:
+            for _ in range(5):
+                if scheduler_stop_event and scheduler_stop_event.is_set():
+                    break
+                time.sleep(1)
 
     logger.log("[LDReboot] ✅ Reboot cycle complete.")
 
@@ -321,7 +345,14 @@ def _scheduler_loop(
             elapsed = 0
             # Re-read interval in case .env was updated
             interval = _get_interval_seconds()
-            run_reboot_cycle(threads, stop_events, drivers, pause_events, paused_ack_events)
+            run_reboot_cycle(
+                threads,
+                stop_events,
+                drivers,
+                pause_events,
+                paused_ack_events,
+                scheduler_stop_event,
+            )
 
     logger.log("[LDReboot] ✓ Scheduler thread stopped.")
 
