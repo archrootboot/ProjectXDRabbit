@@ -6,6 +6,7 @@ import tools.campaign as campaign
 import tools.campaign_status as campaign_status
 import tools.extract_thumbs as extract_thumbs
 import tools.emulator_watcher as emulator_watcher
+import tools.ldplayer_reboot as ldplayer_reboot
 import logger
 
 current_threads = {}
@@ -18,6 +19,10 @@ appium_process = None
 # ── Emulator Watcher state ────────────────────────────────────────────
 _watcher_thread: threading.Thread | None = None
 _watcher_stop_event: threading.Event | None = None
+
+# ── LDPlayer Reboot Scheduler state ──────────────────────────────────
+_reboot_thread: threading.Thread | None = None
+_reboot_stop_event: threading.Event | None = None
 
 # ── Script pause state ────────────────────────────────────────────────
 _script_paused = False
@@ -272,6 +277,48 @@ def option_twelve():
     print(f"✓ Emulator Monitor started — will auto-detect and launch new emulators every {interval}s.")
 
 
+def option_thirteen():
+    """Toggle the LDPlayer auto-reboot scheduler on or off."""
+    global _reboot_thread, _reboot_stop_event
+
+    # ── if scheduler is already running, stop it ──────────────────────
+    if _reboot_thread is not None and _reboot_thread.is_alive():
+        print("\n→ Stopping LDPlayer Reboot Scheduler...")
+        ldplayer_reboot.stop_reboot_scheduler(_reboot_thread, _reboot_stop_event)
+        _reboot_thread = None
+        _reboot_stop_event = None
+        print("✓ LDPlayer Reboot Scheduler stopped.")
+        return
+
+    # ── require the main script to be running first ───────────────────
+    if not current_threads:
+        print("✗ No script is running. Start the script first (option 2).")
+        return
+
+    import os
+    interval_s = os.getenv("REBOOT_INTERVAL_SECONDS", "14400").strip()
+    count      = os.getenv("REBOOT_INSTANCE_COUNT", "1").strip()
+    inst_delay = os.getenv("REBOOT_INSTANCE_INTERVAL_SECONDS", "5").strip()
+    ldpath     = os.getenv("LDPLAYER_PATH", "(not set)").strip()
+
+    print(f"\n→ Starting LDPlayer Reboot Scheduler")
+    print(f"   ldconsole : {ldpath}")
+    print(f"   Cycle     : every {interval_s}s")
+    print(f"   Per cycle : reboot all emulators ({count} at a time)")
+    print(f"   Delay     : {inst_delay}s between reboot instance(s)")
+
+    _reboot_stop_event = threading.Event()
+    _reboot_thread = ldplayer_reboot.start_reboot_scheduler(
+        current_threads,
+        current_stop_events,
+        current_drivers,
+        current_pause_events,
+        current_paused_ack_events,
+        _reboot_stop_event,
+    )
+    print("✓ LDPlayer Reboot Scheduler started.")
+
+
 def stop_appium():
     global appium_process
     if appium_process and appium_process.poll() is None:
@@ -324,6 +371,10 @@ def show_menu():
         else:
             script_label = "[inactive]"
 
+        # ── build the dynamic reboot scheduler label ──────────────────────
+        reboot_active = _reboot_thread is not None and _reboot_thread.is_alive()
+        reboot_label  = "[ACTIVE ✓]" if reboot_active else "[inactive]"
+
         print("\n 🤖  Appium CLI Controller")
         print("1.  Start Appium Core")
         print(f"2.  Run Script            {script_label}")
@@ -337,9 +388,10 @@ def show_menu():
         print("10. Delete Complete Campaigns")
         print("11. Extract Thumbnails")
         print(f"12. Emulator Monitor  {monitor_label}")
-        print("13. Exit")
+        print(f"13. LDPlayer Reboot Scheduler  {reboot_label}")
+        print("14. Exit")
 
-        choice = input("Enter your choice (1-13): ").strip()
+        choice = input("Enter your choice (1-14): ").strip()
 
         if choice == "1":
             option_one()
@@ -366,6 +418,8 @@ def show_menu():
         elif choice == "12":
             option_twelve()
         elif choice == "13":
+            option_thirteen()
+        elif choice == "14":
             if current_threads:
                 running = [udid for udid, t in current_threads.items() if t.is_alive()]
                 if running:
@@ -374,17 +428,21 @@ def show_menu():
                     if confirm == "y":
                         if _watcher_thread and _watcher_thread.is_alive():
                             emulator_watcher.stop_watcher(_watcher_thread, _watcher_stop_event)
+                        if _reboot_thread and _reboot_thread.is_alive():
+                            ldplayer_reboot.stop_reboot_scheduler(_reboot_thread, _reboot_stop_event)
                         des_cap.stop_all(current_threads, current_stop_events, current_drivers)
                     else:
                         continue
             else:
                 if _watcher_thread and _watcher_thread.is_alive():
                     emulator_watcher.stop_watcher(_watcher_thread, _watcher_stop_event)
+                if _reboot_thread and _reboot_thread.is_alive():
+                    ldplayer_reboot.stop_reboot_scheduler(_reboot_thread, _reboot_stop_event)
             stop_appium()
             print("Exiting program. Goodbye!")
             break
         else:
-            print("Invalid selection. Please try again (1-13).")
+            print("Invalid selection. Please try again (1-14).")
 
 
 if __name__ == "__main__":
