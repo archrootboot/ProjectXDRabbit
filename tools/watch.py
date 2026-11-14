@@ -223,6 +223,14 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
         if stop_event.is_set():
             return "stopped"
 
+        # ── re-acquire play lock BEFORE tapping back ──────────────────
+        # This ensures no two emulators ever tap back at the same time.
+        if play_lock is not None and not lock_held:
+            logger.log(f"[{udid}] 🔒 Video done — waiting for play lock before tap back...")
+            play_lock.acquire()
+            lock_held = True
+            logger.log(f"[{udid}] 🔒 Play lock acquired — ready to tap back.")
+
         logger.log(f"[{udid}] ✓ Video finished.")
         return "done"
 
@@ -305,6 +313,12 @@ def watch_video(driver, udid, stop_event, pause_event=None, paused_ack=None, pla
                 if result == "done":
                     driver.tap([(13, 943)], 100)
                     logger.log(f"[{udid}] ✓ Tapped back.")
+                    # ── release play lock now that tap back + thumbnail search
+                    #    can begin — released after play() in wait_for_video ──
+                    if play_lock is not None and lock_held:
+                        play_lock.release()
+                        lock_held = False
+                        logger.log(f"[{udid}] 🔓 Play lock released — tap back done.")
                     point_check(old_point_value)
                     consecutive_errors = 0
                     # ── safe idle point: video done, points recorded ──
